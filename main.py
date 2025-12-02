@@ -16,4 +16,5 @@ if __name__ == "__main__":
     #                                 point_show_normal=False)
 
     las_wrapper = LasWrapper(las_file)
+    las_wrapper.filter_noise()
     las_wrapper.write_to_file(output_file)

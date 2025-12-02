@@ -17,6 +17,10 @@ class LasWrapper:
         self._las_header = self._create_new_las_filer_header()
         self._set_attributes_and_o3d_points()
 
+    def _get_original_las_header(self):
+        with laspy.open(self._las_path) as las:
+            return las.header
+
     def _create_new_las_filer_header(self):
         with laspy.open(self._las_path) as las:
             original_header = las.header
@@ -50,13 +54,42 @@ class LasWrapper:
         print ("Sat up Open3D point cloud with", len(self._o3d_pcb.points), "points")
 
     def _read_file_in_chunks(self):
-        print(f"Reading LAS file in chunks of {self._las_header.point_count} / {self._chunk_size}...")
+        orignal_header = self._get_original_las_header()
+        print(f"Reading LAS file in chunks of {orignal_header.point_count} / {self._chunk_size}...")
         expected_number_of_chunks = self._las_header.point_count // self._chunk_size
         print(f"Expected number of chunks: {expected_number_of_chunks}")
         with laspy.open(self._las_path) as f:
             for index, points in enumerate(f.chunk_iterator(self._chunk_size)):
                 print(f"Read chunk {index} with {len(points)} points")
                 yield points
+
+    def _update_pcb_and_attributes(self, indices):
+        """
+        Update the Open3D point cloud and attributes based on given indices.
+        Args:
+            indices: Indices of points to keep
+        """
+        self._o3d_pcb = self._o3d_pcb.select_by_index(indices)
+        for dim, arr in self._attributes.items():
+            self._attributes[dim] = arr[indices]
+
+    def filter_noise(self, nb_neighbors=20, std_ratio=2.0):
+        """
+        Remove statistical outliers from the Open3D point cloud and update attributes accordingly.
+        Args:
+            nb_neighbors: Number of neighbors to analyze for each point.
+            std_ratio: Standard deviation ratio threshold.
+        """
+        print(f"Filtering noise using statistical outlier removal (nb_neighbors={nb_neighbors}, std_ratio={std_ratio})...")
+        pcd = self._o3d_pcb
+        # Get indices of inliers
+        _, ind = pcd.remove_statistical_outlier(
+            nb_neighbors=nb_neighbors,
+            std_ratio=std_ratio
+        )
+        # Filter Open3D point cloud
+        self._update_pcb_and_attributes(ind)
+        print(f"Noise filtering complete. Remaining points: {len(self._o3d_pcb.points)}")
 
     def write_to_file(self, output_path):
         """
