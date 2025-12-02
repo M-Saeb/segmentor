@@ -9,5 +9,11 @@ if __name__ == "__main__":
     
     las_file = sys.argv[1]
     output_file = sys.argv[2]
+    # o3d.visualization.draw_geometries([pcd],
+    #                                 window_name="LAS Viewer",
+    #                                 width=1024,
+    #                                 height=768,
+    #                                 point_show_normal=False)
+
     las_wrapper = LasWrapper(las_file)
     las_wrapper.write_to_file(output_file)
