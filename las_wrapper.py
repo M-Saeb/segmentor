@@ -11,25 +11,21 @@ class LasWrapper:
             chunk_size: Number of points to read per chunk (default 5 million)
         """
         self._las_path = las_path
-        self._chunk_size = chunk_size
-        self._header = self._get_header_from_las_file(las_path)
         self._attributes = {}
-        self._o3d_pcb = self._create_o3d_point_cloud(las_path)
+        self._o3d_pcb = o3d.geometry.PointCloud()
+        self._chunk_size = chunk_size
+        self._las_header = self._create_new_las_filer_header()
+        self._set_attributes_and_o3d_points()
 
-    def _read_file_in_chunks(self):
-        print(f"Reading LAS file in chunks {self._chunk_size} / {self._header.point_count}...")
-        number_of_chunks = self._header.point_count // self._chunk_size
-        print(f"Expected number of chunks: {number_of_chunks}")
-        with laspy.open(self._las_path) as f:
-            for index, points in enumerate(f.chunk_iterator(self._chunk_size)):
-                print(f"Read chunk {index} with {len(points)} points")
-                yield points
+    def _create_new_las_filer_header(self):
+        with laspy.open(self._las_path) as las:
+            original_header = las.header
+            header = laspy.LasHeader(point_format=original_header.point_format, version=original_header.version)
+            header.offsets = original_header.offsets
+            header.scales = original_header.scales
+            return header
 
-    def _get_header_from_las_file(self, las_path):
-        with laspy.open(las_path) as las:
-            return las.header
-
-    def _create_o3d_point_cloud(self, las_path):
+    def _set_attributes_and_o3d_points(self):
         pcd = o3d.geometry.PointCloud()
         all_points = []
         attributes = {}
@@ -48,8 +44,19 @@ class LasWrapper:
             # Concatenate all attribute arrays
             for dim, arrays in attributes.items():
                 attributes[dim] = np.concatenate(arrays)
+
         self._attributes = attributes
-        return pcd
+        self._o3d_pcb = pcd
+        print ("Sat up Open3D point cloud with", len(self._o3d_pcb.points), "points")
+
+    def _read_file_in_chunks(self):
+        print(f"Reading LAS file in chunks of {self._las_header.point_count} / {self._chunk_size}...")
+        expected_number_of_chunks = self._las_header.point_count // self._chunk_size
+        print(f"Expected number of chunks: {expected_number_of_chunks}")
+        with laspy.open(self._las_path) as f:
+            for index, points in enumerate(f.chunk_iterator(self._chunk_size)):
+                print(f"Read chunk {index} with {len(points)} points")
+                yield points
 
     def write_to_file(self, output_path):
         """
@@ -57,18 +64,15 @@ class LasWrapper:
         Args:
             output_path: Path to save the new .las file
         """
-        print(f"Writing Open3D point cloud to {output_path} in chunks, preserving all attributes...")
+        print(f"Writing Open3D point cloud to {output_path} in chunks...")
         points = np.asarray(self._o3d_pcb.points)
-        header = laspy.LasHeader(point_format=self._header.point_format, version=self._header.version)
-        header.offsets = self._header.offsets
-        header.scales = self._header.scales
 
         num_points = points.shape[0]
         chunk_size = self._chunk_size
-        with laspy.open(output_path, mode="w", header=header) as writer:
+        with laspy.open(output_path, mode="w", header=self._las_header) as writer:
             for index in range(0, num_points, chunk_size):
                 chunk = points[index:index+chunk_size]
-                las_chunk = laspy.LasData(header)
+                las_chunk = laspy.LasData(self._las_header)
                 las_chunk.x = chunk[:, 0]
                 las_chunk.y = chunk[:, 1]
                 las_chunk.z = chunk[:, 2]
