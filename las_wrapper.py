@@ -1,9 +1,15 @@
 import laspy
 import open3d as o3d
 import numpy as np
-import pcb_utils
+from  utils import log_utils, pcd_utils
 
+log = log_utils.get_dual_logger(__name__)
+  
 class LasWrapper:
+
+    INIT_CLASSIFICATION = 1  # Unclassified
+    GROUND_CLASSIFICATION = 2
+
     def __init__(self, las_path, chunk_size=5_000_000):
         """
         Wrapper to read LAS files either in chunks or bulk.
@@ -12,7 +18,7 @@ class LasWrapper:
             chunk_size: Number of points to read per chunk (default 5 million)
         """
         self._las_path = las_path
-        self._pcb = o3d.geometry.PointCloud()
+        self._pcd = o3d.geometry.PointCloud()
         self._points_attributes = {}
         self._chunk_size = chunk_size
         self._setup_o3d_points_and_attributes()
@@ -48,27 +54,32 @@ class LasWrapper:
             for dim, arrays in points_attributes.items():
                 points_attributes[dim] = np.concatenate(arrays)
 
-        self._pcb = pcd
+        self._pcd = pcd
         self._points_attributes = points_attributes
-        print ("Sat up Open3D point cloud with", len(self._pcb.points), "points")
+    
+        # Initialize classification attribute for all points
+        num_points = len(pcd.points)
+        classification = np.full(num_points, self.INIT_CLASSIFICATION, dtype=np.uint8)
+        self._points_attributes['classification'] = classification
+        log.info("Set up Open3D point cloud with %d points", len(self._pcd.points))
 
     def _read_file_in_chunks(self):
         orignal_header = self._get_original_las_header()
-        print(f"Reading LAS file in chunks of {orignal_header.point_count} / {self._chunk_size}...")
+        log.info("Reading LAS file in chunks of %d / %d...", orignal_header.point_count, self._chunk_size)
         expected_number_of_chunks = orignal_header.point_count // self._chunk_size
-        print(f"Expected number of chunks: {expected_number_of_chunks}")
+        log.info("Expected number of chunks: %d", expected_number_of_chunks)
         with laspy.open(self._las_path) as f:
             for index, points in enumerate(f.chunk_iterator(self._chunk_size)):
-                print(f"Read chunk {index} with {len(points)} points")
+                log.info("Read chunk %d with %d points", index, len(points))
                 yield points
 
-    def _update_pcb_and_points_attributes(self, indices):
+    def _update_pcd_and_points_attributes(self, indices):
         """
         Update the Open3D point cloud and attributes based on given indices.
         Args:
             indices: Indices of points to keep
         """
-        self._pcb = self._pcb.select_by_index(indices)
+        self._pcd = self._pcd.select_by_index(indices)
         for dim, arr in self._points_attributes.items():
             self._points_attributes[dim] = arr[indices]
 
@@ -79,14 +90,14 @@ class LasWrapper:
             nb_neighbors: Number of neighbors to analyze for each point.
             std_ratio: Standard deviation ratio threshold.
         """
-        print(f"Filtering noise using statistical outlier removal (nb_neighbors={nb_neighbors}, std_ratio={std_ratio})...")
+        log.info("Filtering noise using statistical outlier removal (nb_neighbors=%d, std_ratio=%f)...", nb_neighbors, std_ratio)
         # Filter Open3D point cloud
-        _, ind = self._pcb.remove_statistical_outlier(
+        _, ind = self._pcd.remove_statistical_outlier(
             nb_neighbors=nb_neighbors,
             std_ratio=std_ratio
         )
-        self._update_pcb_and_points_attributes(ind)
-        print(f"Noise filtering complete. Remaining points: {len(self._pcb.points)}")
+        self._update_pcd_and_points_attributes(ind)
+        log.info("Noise filtering complete. Remaining points: %d", len(self._pcd.points))
 
     def write_to_file(self, output_path):
         """
@@ -94,8 +105,8 @@ class LasWrapper:
         Args:
             output_path: Path to save the new .las file
         """
-        print(f"Writing Open3D point cloud to {output_path} in chunks...")
-        points = np.asarray(self._pcb.points)
+        log.info("Writing Open3D point cloud to %s in chunks...", output_path)
+        points = np.asarray(self._pcd.points)
 
         num_points = points.shape[0]
         chunk_size = self._chunk_size
@@ -111,8 +122,8 @@ class LasWrapper:
                 for dim, arr in self._points_attributes.items():
                     setattr(las_chunk, dim, arr[index:index+chunk_size])
                 writer.write_points(las_chunk.points)
-                print(f"Wrote chunk {index//chunk_size} points to {output_path}")
-        print(f"Finished writing Open3D point cloud to LAS file")
+                log.info("Wrote chunk %d points to %s", index//chunk_size, output_path)
+        log.info("Finished writing Open3D point cloud to LAS file")
 
     def segment_ground(self):
         """
@@ -123,20 +134,18 @@ class LasWrapper:
         3. Split cloud at peak end
         4. Assign classification numbers
         """
-        print("Filtering ground using Z coordinate histogram...")
-        points = np.asarray(self._pcb.points)
+        log.info("Filtering ground using Z coordinate histogram...")
+        points = np.asarray(self._pcd.points)
         z_values = points[:, 2]
         # Step 1: Create Z histogram (to make it usable)
-        x, y = pcb_utils.create_histogram(z_values)
+        x, y = pcd_utils.create_histogram(z_values)
         # Step 2: Find peak in Z histogram
-        peak_idx, left_idx, right_idx = pcb_utils.find_peak_and_drops(x, y)
-        print(f"Peak at Z={x[peak_idx]:.2f}, threshold at Z={x[right_idx]:.2f}")
+        peak_idx, left_idx, right_idx = pcd_utils.find_peak_and_drops(x, y)
+        log.info("Peak at Z=%.2f, threshold at Z=%.2f", x[peak_idx], x[right_idx])
         # Step 3: Split cloud
         ground_mask = z_values <= x[right_idx]
-        non_ground_mask = ~ground_mask
-        # Step 4: Assign classification
-        classification = np.zeros_like(z_values, dtype=np.uint8)
-        classification[ground_mask] = 2  # ground
-        classification[non_ground_mask] = 1  # non-ground
+        # Step 4: Update classification using previous values
+        classification = self._points_attributes['classification']
+        classification[ground_mask] = self.GROUND_CLASSIFICATION
         self._points_attributes['classification'] = classification
-        print(f"Assigned classification: ground={np.sum(ground_mask)}, non-ground={np.sum(non_ground_mask)}")
+        log.info("Assigned classification: ground=%d, non-ground=%d", np.sum(ground_mask), np.sum(~ground_mask))
