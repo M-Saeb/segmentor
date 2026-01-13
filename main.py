@@ -17,4 +17,5 @@ if __name__ == "__main__":
 
     las_wrapper = LasWrapper(las_file)
     las_wrapper.filter_noise()
+    las_wrapper.segment_ground()
     las_wrapper.write_to_file(output_file)

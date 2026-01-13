@@ -8,9 +8,11 @@ Please install conda beforehand and activate it. [link](https://docs.conda.io/pr
 
 ### 2. Setup Environment
 
-Run the command 
+Run the commands
 ```bash
 conda env create -f environment.yml
+
+conda activate segmentor
 ```
 
 ## Run the program

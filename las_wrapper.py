@@ -1,6 +1,7 @@
 import laspy
 import open3d as o3d
 import numpy as np
+import pcb_utils
 
 class LasWrapper:
     def __init__(self, las_path, chunk_size=5_000_000):
@@ -112,3 +113,30 @@ class LasWrapper:
                 writer.write_points(las_chunk.points)
                 print(f"Wrote chunk {index//chunk_size} points to {output_path}")
         print(f"Finished writing Open3D point cloud to LAS file")
+
+    def segment_ground(self):
+        """
+        Segment ground/non-ground by analyzing Z coordinate distribution and assign classification numbers.
+        Steps:
+        1. Export Z to ScalarField
+        2. Find start/end of peak in Z histogram
+        3. Split cloud at peak end
+        4. Assign classification numbers
+        """
+        print("Filtering ground using Z coordinate histogram...")
+        points = np.asarray(self._pcb.points)
+        z_values = points[:, 2]
+        # Step 1: Create Z histogram (to make it usable)
+        x, y = pcb_utils.create_histogram(z_values)
+        # Step 2: Find peak in Z histogram
+        peak_idx, left_idx, right_idx = pcb_utils.find_peak_and_drops(x, y)
+        print(f"Peak at Z={x[peak_idx]:.2f}, threshold at Z={x[right_idx]:.2f}")
+        # Step 3: Split cloud
+        ground_mask = z_values <= x[right_idx]
+        non_ground_mask = ~ground_mask
+        # Step 4: Assign classification
+        classification = np.zeros_like(z_values, dtype=np.uint8)
+        classification[ground_mask] = 2  # ground
+        classification[non_ground_mask] = 1  # non-ground
+        self._points_attributes['classification'] = classification
+        print(f"Assigned classification: ground={np.sum(ground_mask)}, non-ground={np.sum(non_ground_mask)}")
