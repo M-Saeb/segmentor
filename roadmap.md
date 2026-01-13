@@ -1,4 +1,3 @@
-# Segmentor
 
 I'll cover this project in phases:
 
