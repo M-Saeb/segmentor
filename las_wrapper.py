@@ -143,7 +143,8 @@ class LasWrapper:
             )
         elif self.config.ground_filter_method == "csf":
             self._points_attributes = pcd_utils.cloth_simulation_filter(
-                self._pcd,
+                np.asarray(self._pcd.points),
+                self._points_attributes,
                 resolution=1.0,
                 rigidness=3,
                 max_iter=500

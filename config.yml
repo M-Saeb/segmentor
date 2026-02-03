@@ -1,3 +1,3 @@
 input_file: "/mnt/e/Documents/Germany/FH Dortmund/5. Semster/Research Project/Code/file_grabber/result/office.las"
-output_file_path: "/mnt/e/Documents/Germany/FH Dortmund/5. Semster/Research Project/Code/file_grabber/result/office_test_1.las"
-ground_filter_method: basic
+output_file_path: "/mnt/e/Documents/Germany/FH Dortmund/5. Semster/Research Project/Code/file_grabber/result/office_test_2.las"
+ground_filter_method: csf # basic or csf

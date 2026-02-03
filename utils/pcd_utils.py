@@ -56,26 +56,31 @@ def basic_ground_filter(points: np.ndarray, points_attributes, z_threshold):
         log.debug("Assigned classification: ground=%d, non-ground=%d", np.sum(ground_mask), np.sum(~ground_mask))
         return points_attributes
 
-def cloth_simulation_filter(pcd, resolution=1.0, rigidness=3, max_iter=500):
-    """Segment ground points from a point cloud using a simplified Cloth Simulation Filter.
+def cloth_simulation_filter(points: np.ndarray, points_attributes, resolution=1.0, rigidness=3, max_iter=500):
+    """Segment ground points from a point cloud using a simplified Cloth Simulation Filter and assign classification.
 
     Args:
-        pcd (np.ndarray): Nx3 array of points (x, y, z).
-        resolution (float): grid cell size in same units as `pcd`.
+        points (np.ndarray): Nx3 array of points (x, y, z).
+        points_attributes (dict): Dictionary of point attributes including 'classification'.
+        resolution (float): grid cell size in same units as `points`.
         rigidness (int): controls cloth stiffness (higher -> stiffer -> less smoothing).
         max_iter (int): maximum number of simulation iterations.
 
     Returns:
-        np.ndarray: boolean mask of length N; True for ground points.
+        dict: Updated points_attributes with classification assigned.
     """
-    if not isinstance(pcd, np.ndarray):
-        raise TypeError("pcd must be a numpy.ndarray of shape (N,3)")
-    if pcd.ndim != 2 or pcd.shape[1] < 3:
-        raise ValueError("pcd must have shape (N,3)")
+    log.debug(
+        "Filtering ground using Cloth Simulation Filter (resolution=%.2f, rigidness=%d, max_iter=%d)...",
+        resolution, rigidness, max_iter
+    )
+    if not isinstance(points, np.ndarray):
+        raise TypeError("points must be a numpy.ndarray of shape (N,3)")
+    if points.ndim != 2 or points.shape[1] < 3:
+        raise ValueError("points must have shape (N,3)")
 
-    xs = pcd[:, 0]
-    ys = pcd[:, 1]
-    zs = pcd[:, 2]
+    xs = points[:, 0]
+    ys = points[:, 1]
+    zs = points[:, 2]
 
     x_min, x_max = float(xs.min()), float(xs.max())
     y_min, y_max = float(ys.min()), float(ys.max())
@@ -145,4 +150,10 @@ def cloth_simulation_filter(pcd, resolution=1.0, rigidness=3, max_iter=500):
     threshold = max(0.3, resolution * 0.5)
     is_ground = (zs - point_cloth_z) <= threshold
 
-    return is_ground
+    # Update classification using previous values
+    classification = points_attributes['classification']
+    classification[is_ground] = GROUND_CLASSIFICATION
+    points_attributes['classification'] = classification
+    log.debug("Assigned classification: ground=%d, non-ground=%d", np.sum(is_ground), np.sum(~is_ground))
+    
+    return points_attributes
