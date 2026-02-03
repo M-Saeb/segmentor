@@ -1,7 +1,7 @@
 import laspy
 import open3d as o3d
 import numpy as np
-from  utils import log_utils, pcd_utils
+from utils import log_utils, pcd_utils, config
 
 log = log_utils.get_dual_logger(__name__)
   
@@ -10,21 +10,20 @@ class LasWrapper:
     INIT_CLASSIFICATION = 1  # Unclassified
     GROUND_CLASSIFICATION = 2
 
-    def __init__(self, las_path, chunk_size=5_000_000):
+    def __init__(self, config_file_path):
         """
         Wrapper to read LAS files either in chunks or bulk.
         Args:
-            las_path: Path to the .las file
+            config_file_path: Path to the configuration YAML file
             chunk_size: Number of points to read per chunk (default 5 million)
         """
-        self._las_path = las_path
+        self.config = config.SegmentorConfig(config_file_path)
         self._pcd = o3d.geometry.PointCloud()
         self._points_attributes = {}
-        self._chunk_size = chunk_size
         self._setup_o3d_points_and_attributes()
 
     def _get_original_las_header(self):
-        with laspy.open(self._las_path) as las:
+        with laspy.open(self.config.input_file) as las:
             return las.header
 
     def _create_new_las_filer_header(self):
@@ -65,11 +64,12 @@ class LasWrapper:
 
     def _read_file_in_chunks(self):
         orignal_header = self._get_original_las_header()
-        log.info("Reading LAS file in chunks of %d / %d...", orignal_header.point_count, self._chunk_size)
-        expected_number_of_chunks = orignal_header.point_count // self._chunk_size
+        chunk_size = self.config.chunk_size
+        log.info("Reading LAS file in chunks of %d / %d...", orignal_header.point_count, chunk_size)
+        expected_number_of_chunks = orignal_header.point_count // chunk_size
         log.info("Expected number of chunks: %d", expected_number_of_chunks)
-        with laspy.open(self._las_path) as f:
-            for index, points in enumerate(f.chunk_iterator(self._chunk_size)):
+        with laspy.open(self.config.input_file) as f:
+            for index, points in enumerate(f.chunk_iterator(chunk_size)):
                 log.info("Read chunk %d with %d points", index, len(points))
                 yield points
 
@@ -99,17 +99,18 @@ class LasWrapper:
         self._update_pcd_and_points_attributes(ind)
         log.info("Noise filtering complete. Remaining points: %d", len(self._pcd.points))
 
-    def write_to_file(self, output_path):
+    def write_to_file(self):
         """
         Write the Open3D point cloud and all original attributes to a new LAS file.
         Args:
             output_path: Path to save the new .las file
         """
+        output_path = self.config.output_file_path
         log.info("Writing Open3D point cloud to %s in chunks...", output_path)
         points = np.asarray(self._pcd.points)
 
         num_points = points.shape[0]
-        chunk_size = self._chunk_size
+        chunk_size = self.config.chunk_size
         new_las_header = self._create_new_las_filer_header()
         with laspy.open(output_path, mode="w", header=new_las_header) as writer:
             for index in range(0, num_points, chunk_size):
@@ -122,7 +123,7 @@ class LasWrapper:
                 for dim, arr in self._points_attributes.items():
                     setattr(las_chunk, dim, arr[index:index+chunk_size])
                 writer.write_points(las_chunk.points)
-                log.info("Wrote chunk %d points to %s", index//chunk_size, output_path)
+                log.debug("Wrote chunk %d points", index//chunk_size)
         log.info("Finished writing Open3D point cloud to LAS file")
 
     def segment_ground(self):
@@ -134,18 +135,19 @@ class LasWrapper:
         3. Split cloud at peak end
         4. Assign classification numbers
         """
-        log.info("Filtering ground using Z coordinate histogram...")
-        points = np.asarray(self._pcd.points)
-        z_values = points[:, 2]
-        # Step 1: Create Z histogram (to make it usable)
-        x, y = pcd_utils.create_histogram(z_values)
-        # Step 2: Find peak in Z histogram
-        peak_idx, left_idx, right_idx = pcd_utils.find_peak_and_drops(x, y)
-        log.info("Peak at Z=%.2f, threshold at Z=%.2f", x[peak_idx], x[right_idx])
-        # Step 3: Split cloud
-        ground_mask = z_values <= x[right_idx]
-        # Step 4: Update classification using previous values
-        classification = self._points_attributes['classification']
-        classification[ground_mask] = self.GROUND_CLASSIFICATION
-        self._points_attributes['classification'] = classification
-        log.info("Assigned classification: ground=%d, non-ground=%d", np.sum(ground_mask), np.sum(~ground_mask))
+        if self.config.ground_filter_method == "basic":
+            self._points_attributes = pcd_utils.basic_ground_filter(
+                np.asarray(self._pcd.points),
+                self._points_attributes,
+                z_threshold=None
+            )
+        elif self.config.ground_filter_method == "csf":
+            self._points_attributes = pcd_utils.cloth_simulation_filter(
+                self._pcd,
+                resolution=1.0,
+                rigidness=3,
+                max_iter=500
+            )
+        else:
+            log.error("Unknown ground filter method: %s", self.config.ground_filter_method)
+            raise ValueError(f"Unknown ground filter method: {self.config.ground_filter_method}")
