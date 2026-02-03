@@ -9,7 +9,15 @@ class SegmentorConfig:
     input_file: str = "./input.las"
     output_file_path: str = "./output.las"
     chunk_size: int = 5_000_000
-    ground_filter_method: str = "basic"  # Options: "basic", "csf"
+    ground_segmentation: dict = {
+        "enable": True,
+        "method": "basic",
+        "csf_params": {
+            "resolution": 1.0,
+            "rigidness": 3,
+            "max_iter": 500
+        }
+    }
 
     def __init__(self, config_file: str):
         """Initialize SegmentorConfig from a YAML file.
@@ -28,12 +36,14 @@ class SegmentorConfig:
         with open(config_file, "r") as f:
             config_data = yaml.safe_load(f) or {}
 
+        self.validate_config_file(config_data)
+
         # Override with loaded values from YAML
         for key, value in config_data.items():
             setattr(self, key, value)
-        
-        self._validate_input_file()
 
-    def _validate_input_file(self):
-        if not os.path.isfile(self.input_file):
-            raise FileNotFoundError(f"LAS file not found: {self.input_file}")
+    def validate_config_file(self, config_data):
+        input_file = config_data.get("input_file", self.input_file)
+        if not input_file:
+            raise FileNotFoundError(f"LAS file not found: {input_file}")
+        

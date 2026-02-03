@@ -67,10 +67,10 @@ class LasWrapper:
         chunk_size = self.config.chunk_size
         log.info("Reading LAS file in chunks of %d / %d...", orignal_header.point_count, chunk_size)
         expected_number_of_chunks = orignal_header.point_count // chunk_size
-        log.info("Expected number of chunks: %d", expected_number_of_chunks)
+        log.debug("Expected number of chunks: %d", expected_number_of_chunks)
         with laspy.open(self.config.input_file) as f:
             for index, points in enumerate(f.chunk_iterator(chunk_size)):
-                log.info("Read chunk %d with %d points", index, len(points))
+                log.debug("Read chunk %d with %d points", index, len(points))
                 yield points
 
     def _update_pcd_and_points_attributes(self, indices):
@@ -135,20 +135,25 @@ class LasWrapper:
         3. Split cloud at peak end
         4. Assign classification numbers
         """
-        if self.config.ground_filter_method == "basic":
+        segementation = self.config.ground_segmentation
+        log.info("Segmenting ground points using method: %s", segementation['method'])
+        if segementation['method'] == "basic":
             self._points_attributes = pcd_utils.basic_ground_filter(
                 np.asarray(self._pcd.points),
                 self._points_attributes,
                 z_threshold=None
             )
-        elif self.config.ground_filter_method == "csf":
+        elif segementation['method'] == "csf":
+            resolution = segementation['csf_params']['resolution']
+            rigidness = segementation['csf_params']['rigidness']
+            max_iter = segementation['csf_params']['max_iter']
             self._points_attributes = pcd_utils.cloth_simulation_filter(
                 np.asarray(self._pcd.points),
                 self._points_attributes,
-                resolution=1.0,
-                rigidness=3,
-                max_iter=500
+                resolution=resolution,
+                rigidness=rigidness,
+                max_iter=max_iter
             )
         else:
-            log.error("Unknown ground filter method: %s", self.config.ground_filter_method)
-            raise ValueError(f"Unknown ground filter method: {self.config.ground_filter_method}")
+            log.error("Unknown ground filter method: %s", segementation['method'])
+            raise ValueError(f"Unknown ground filter method: {segementation['method']}")
