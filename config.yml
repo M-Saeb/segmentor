@@ -1,9 +1,15 @@
-input_file: "/mnt/e/Documents/Germany/FH Dortmund/5. Semster/Research Project/Code/file_grabber/result/office/office_og.las"
-output_file_path: "/mnt/e/Documents/Germany/FH Dortmund/5. Semster/Research Project/Code/file_grabber/result/office/office_test_1.las"
+input_file: "/media/mohammedalsalihi/4908539B2FBDCF49/lidar_scans/for_mohammed/office.las"
+
+filter_noise: false
+
 ground_segmentation:
-  enable: true
+  enable: false
   method: csf # basic or csf
   csf_params: # only for csf method
     resolution: 1
     rigidness: 3
     max_iter: 500
+
+result: # the resulted pointed cloud from the program
+  display_result: true
+  write_to_file: false # "/mnt/e/Documents/Germany/FH Dortmund/5. Semster/Research Project/Code/file_grabber/result/office/office_test_1.las"

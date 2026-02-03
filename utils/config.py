@@ -7,7 +7,7 @@ class SegmentorConfig:
 
     # Pre-defined default parameters
     input_file: str = "./input.las"
-    output_file_path: str = "./output.las"
+    filter_noise: bool = False
     chunk_size: int = 5_000_000
     ground_segmentation: dict = {
         "enable": True,
@@ -17,6 +17,10 @@ class SegmentorConfig:
             "rigidness": 3,
             "max_iter": 500
         }
+    }
+    result = {
+        "display_result": True,
+        "write_to_file": "./output.las"
     }
 
     def __init__(self, config_file: str):

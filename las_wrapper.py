@@ -105,14 +105,14 @@ class LasWrapper:
         Args:
             output_path: Path to save the new .las file
         """
-        output_path = self.config.output_file_path
-        log.info("Writing Open3D point cloud to %s in chunks...", output_path)
+        output_file_path = self.config.result["write_to_file"]
+        log.info("Writing Open3D point cloud to %s in chunks...", output_file_path)
         points = np.asarray(self._pcd.points)
 
         num_points = points.shape[0]
         chunk_size = self.config.chunk_size
         new_las_header = self._create_new_las_filer_header()
-        with laspy.open(output_path, mode="w", header=new_las_header) as writer:
+        with laspy.open(output_file_path, mode="w", header=new_las_header) as writer:
             for index in range(0, num_points, chunk_size):
                 chunk = points[index:index+chunk_size]
                 las_chunk = laspy.LasData(new_las_header)
@@ -157,3 +157,20 @@ class LasWrapper:
         else:
             log.error("Unknown ground filter method: %s", segementation['method'])
             raise ValueError(f"Unknown ground filter method: {segementation['method']}")
+        
+    def display_pcb(self):
+        log.info("Displaying point cloud...")
+        o3d.visualization.draw_geometries([self._pcd])
+
+    def run_steps(self):
+        if self.config.filter_noise:
+            self.filter_noise()
+
+        if self.config.ground_segmentation["enable"]:
+            self.segment_ground()
+
+        if self.config.result["write_to_file"]:
+            self.write_to_file()
+
+        if self.config.result["display_result"]:
+            self.display_pcb()

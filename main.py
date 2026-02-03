@@ -11,6 +11,4 @@ if __name__ == "__main__":
         config_file = default_config_file
 
     las_wrapper = LasWrapper(config_file)
-    las_wrapper.filter_noise()
-    las_wrapper.segment_ground()
-    las_wrapper.write_to_file()
+    las_wrapper.run_steps()
