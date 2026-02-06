@@ -13,10 +13,14 @@ class SegmentorConfig:
         "enable": True,
         "method": "basic",
         "csf_params": {
+            "threshold_factor": 0.1,
             "resolution": 1.0,
             "rigidness": 3,
             "max_iter": 500
         }
+    }
+    wall_segmentation: dict = {
+        "enable": False
     }
     result = {
         "display_result": True,

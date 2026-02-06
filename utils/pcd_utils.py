@@ -1,6 +1,7 @@
 import numpy as np
+import open3d as o3d
 from  utils import log_utils
-from .classses import GROUND_CLASSIFICATION
+from .classses import INIT_CLASSIFICATION, GROUND_CLASSIFICATION, WALL_CLASSIFICATION
 
 log = log_utils.get_dual_logger(__name__)
 
@@ -56,12 +57,14 @@ def basic_ground_filter(points: np.ndarray, points_attributes, z_threshold):
         log.debug("Assigned classification: ground=%d, non-ground=%d", np.sum(ground_mask), np.sum(~ground_mask))
         return points_attributes
 
-def cloth_simulation_filter(points: np.ndarray, points_attributes, resolution=1.0, rigidness=3, max_iter=500):
+def cloth_simulation_filter(points: np.ndarray, points_attributes, threshold_factor=0.1, 
+                            resolution=1.0, rigidness=3, max_iter=500):
     """Segment ground points from a point cloud using a simplified Cloth Simulation Filter and assign classification.
 
     Args:
         points (np.ndarray): Nx3 array of points (x, y, z).
         points_attributes (dict): Dictionary of point attributes including 'classification'.
+        threshold_factor (float): factor to determine ground threshold distance from cloth.
         resolution (float): grid cell size in same units as `points`.
         rigidness (int): controls cloth stiffness (higher -> stiffer -> less smoothing).
         max_iter (int): maximum number of simulation iterations.
@@ -70,8 +73,8 @@ def cloth_simulation_filter(points: np.ndarray, points_attributes, resolution=1.
         dict: Updated points_attributes with classification assigned.
     """
     log.debug(
-        "Filtering ground using Cloth Simulation Filter (resolution=%.2f, rigidness=%d, max_iter=%d)...",
-        resolution, rigidness, max_iter
+        "Filtering ground using Cloth Simulation Filter ( threshold_factor=%.2f, resolution=%.2f, rigidness=%d, max_iter=%d)...",
+        threshold_factor, resolution, rigidness, max_iter
     )
     if not isinstance(points, np.ndarray):
         raise TypeError("points must be a numpy.ndarray of shape (N,3)")
@@ -147,7 +150,7 @@ def cloth_simulation_filter(points: np.ndarray, points_attributes, resolution=1.
     point_cloth_z = cloth_lin[lin_idx]
 
     # threshold: points within a small height from cloth are ground
-    threshold = max(0.3, resolution * 0.5)
+    threshold = max(0.3, resolution * threshold_factor)
     is_ground = (zs - point_cloth_z) <= threshold
 
     # Update classification using previous values
@@ -155,5 +158,76 @@ def cloth_simulation_filter(points: np.ndarray, points_attributes, resolution=1.
     classification[is_ground] = GROUND_CLASSIFICATION
     points_attributes['classification'] = classification
     log.debug("Assigned classification: ground=%d, non-ground=%d", np.sum(is_ground), np.sum(~is_ground))
+    
+    return points_attributes
+
+
+def segment_vertical_surfaces_normal_based_filtering(points: np.ndarray, points_attributes, 
+                                                      angle_threshold=10, search_radius=0.5, max_nn=30):
+    """
+    Segment vertical surfaces using normal vector estimation and assign classification.
+    
+    Args:
+        points (np.ndarray): Nx3 array of points (x, y, z).
+        points_attributes (dict): Dictionary of point attributes including 'classification'.
+        angle_threshold (float): Max angle from horizontal for vertical surfaces (degrees).
+        search_radius (float): Radius for KDTree search during normal estimation.
+        max_nn (int): Max number of neighbors for normal estimation.
+    
+    Returns:
+        dict: Updated points_attributes with vertical surfaces classified.
+    """
+    
+    log.debug(
+        "Segmenting vertical surfaces using normal-based filtering (angle_threshold=%.1f, search_radius=%.2f, max_nn=%d)...",
+        angle_threshold, search_radius, max_nn
+    )
+    
+    # Create temporary Open3D point cloud for normal estimation
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+    
+    log.debug("Estimating normals for %d points...", len(points))
+
+    # Estimate normals
+    pcd.estimate_normals(
+        search_param=o3d.geometry.KDTreeSearchParamHybrid(
+            radius=search_radius,
+            max_nn=max_nn
+        )
+    )
+
+    log.debug("Orienting normals consistently...")
+
+    # Orient normals consistently (optional but helpful)
+    pcd.orient_normals_consistent_tangent_plane(k=15)
+    
+    # Get normals
+    normals = np.asarray(pcd.normals)
+    
+    # Vertical surfaces have horizontal normals
+    # Z-component close to 0 means normal points sideways
+
+    log.debug("Classifying vertical surfaces based on normal vectors...")
+
+    angle_from_horizontal = np.abs(np.arcsin(np.clip(normals[:, 2], -1.0, 1.0))) * 180 / np.pi
+    
+    # Points are vertical if angle from horizontal < threshold
+    is_vertical = angle_from_horizontal < angle_threshold
+    
+    # Update classification: mark vertical surfaces only if currently unclassified
+    # Using classification value 6 for walls (standard LAS classification for buildings/structures)
+
+    log.debug("Updating classification for vertical surfaces...")
+
+    classification = points_attributes['classification']
+    is_vertical_and_unclassified = is_vertical & (classification == INIT_CLASSIFICATION)
+    classification[is_vertical_and_unclassified] = WALL_CLASSIFICATION
+    points_attributes['classification'] = classification
+    
+    num_vertical = np.sum(is_vertical)
+    num_non_vertical = np.sum(~is_vertical)
+    log.debug("Assigned classification: vertical=%d (%.1f%%), non-vertical=%d", 
+              num_vertical, 100 * num_vertical / len(points), num_non_vertical)
     
     return points_attributes

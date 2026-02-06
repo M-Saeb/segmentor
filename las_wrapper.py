@@ -1,14 +1,11 @@
 import laspy
 import open3d as o3d
 import numpy as np
-from utils import log_utils, pcd_utils, config
+from utils import log_utils, pcd_utils, config, classses
 
 log = log_utils.get_dual_logger(__name__)
   
 class LasWrapper:
-
-    INIT_CLASSIFICATION = 1  # Unclassified
-    GROUND_CLASSIFICATION = 2
 
     def __init__(self, config_file_path):
         """
@@ -58,7 +55,7 @@ class LasWrapper:
     
         # Initialize classification attribute for all points
         num_points = len(pcd.points)
-        classification = np.full(num_points, self.INIT_CLASSIFICATION, dtype=np.uint8)
+        classification = np.full(num_points, classses.INIT_CLASSIFICATION, dtype=np.uint8)
         self._points_attributes['classification'] = classification
         log.info("Set up Open3D point cloud with %d points", len(self._pcd.points))
 
@@ -144,12 +141,14 @@ class LasWrapper:
                 z_threshold=None
             )
         elif segementation['method'] == "csf":
+            threshold_factor=segementation['csf_params']['threshold_factor']
             resolution = segementation['csf_params']['resolution']
             rigidness = segementation['csf_params']['rigidness']
             max_iter = segementation['csf_params']['max_iter']
             self._points_attributes = pcd_utils.cloth_simulation_filter(
                 np.asarray(self._pcd.points),
                 self._points_attributes,
+                threshold_factor=threshold_factor,
                 resolution=resolution,
                 rigidness=rigidness,
                 max_iter=max_iter
@@ -159,8 +158,66 @@ class LasWrapper:
             raise ValueError(f"Unknown ground filter method: {segementation['method']}")
         
     def display_pcb(self):
-        log.info("Displaying point cloud...")
+        log.info("Displaying point cloud with classification-based coloring...")
+        # Try to color points using the 'classification' attribute if available
+        cls = self._points_attributes.get('classification', None)
+        if cls is None or len(cls) != len(self._pcd.points):
+            o3d.visualization.draw_geometries([self._pcd])
+            return
+
+        cls = np.asarray(cls, dtype=int)
+        # predefined colors for known classes
+        color_map = {
+            classses.INIT_CLASSIFICATION: np.array([0.5, 0.5, 0.5]),  # unclassified -> gray
+            classses.GROUND_CLASSIFICATION: np.array([0.0, 1.0, 0.0]),  # ground -> green
+        }
+
+        colors = np.empty((len(cls), 3), dtype=float)
+        for i, c in enumerate(cls):
+            if c in color_map:
+                colors[i] = color_map[c]
+            else:
+                # deterministic fallback color per class id
+                ci = int(c)
+                colors[i] = np.array([((ci * 37) % 255) / 255.0,
+                                      ((ci * 61) % 255) / 255.0,
+                                      ((ci * 97) % 255) / 255.0])
+
+        self._pcd.colors = o3d.utility.Vector3dVector(colors)
         o3d.visualization.draw_geometries([self._pcd])
+
+    def segment_vertical_surfaces(self):
+        """
+        Segment vertical surfaces using normal vectors on unclassified points only.
+        """
+        # Filter to only unclassified points
+        classification = self._points_attributes['classification']
+        unclassified_mask = classification == classses.INIT_CLASSIFICATION
+        unclassified_indices = np.where(unclassified_mask)[0]
+        
+        if len(unclassified_indices) == 0:
+            log.info("No unclassified points to segment for vertical surfaces")
+            return
+        
+        # Extract unclassified points and their attributes
+        points = np.asarray(self._pcd.points)
+        unclassified_points = points[unclassified_indices]
+        
+        unclassified_attributes = {}
+        for dim, arr in self._points_attributes.items():
+            unclassified_attributes[dim] = arr[unclassified_indices]
+        
+        # Segment vertical surfaces on unclassified subset
+        updated_attributes = pcd_utils.segment_vertical_surfaces_normal_based_filtering(
+            unclassified_points,
+            unclassified_attributes,
+            angle_threshold=15.0,
+            search_radius=0.5,
+            max_nn=30
+        )
+        
+        # Update classification in original array
+        self._points_attributes['classification'][unclassified_indices] = updated_attributes['classification']
 
     def run_steps(self):
         if self.config.filter_noise:
@@ -168,6 +225,9 @@ class LasWrapper:
 
         if self.config.ground_segmentation["enable"]:
             self.segment_ground()
+
+        if self.config.wall_segmentation["enable"]:
+            self.segment_vertical_surfaces()
 
         if self.config.result["write_to_file"]:
             self.write_to_file()
