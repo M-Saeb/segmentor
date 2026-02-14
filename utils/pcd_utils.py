@@ -161,73 +161,137 @@ def cloth_simulation_filter(points: np.ndarray, points_attributes, threshold_fac
     
     return points_attributes
 
+def apply_ransac_wall_detection(
+    points: np.ndarray,
+    points_attributes,
+    epsilon: float = 0.001,
+    min_support_points: int = 20000,
+    max_normal_dev: float = 10.0,
+    max_iterations: int = 1000,
+    min_plane_size_ratio: float = 0.01
+):
+    """
+    Apply RANSAC plane detection for wall segmentation on a point cloud.
+    
+    Parameters:
+    -----------
+    points : np.ndarray
+        3D numpy array of shape (N, 3) containing point cloud coordinates
+    points_attributes : dict-like
+        Must contain a `classification` array-like with length N
+    epsilon : float
+        Maximum distance from point to plane to be considered an inlier (default: 0.001)
+    min_support_points : int
+        Minimum number of points required to form a valid plane (default: 20000)
+    max_normal_dev : float
+        Maximum allowed deviation from vertical in degrees for wall classification (default: 10.0)
+    max_iterations : int
+        Maximum number of RANSAC iterations per plane detection (default: 1000)
+    min_plane_size_ratio : float
+        Minimum ratio of remaining points to continue detection (default: 0.01)
 
-def segment_vertical_surfaces_normal_based_filtering(points: np.ndarray, points_attributes, 
-                                                      angle_threshold=10, search_radius=0.5, max_nn=30):
-    """
-    Segment vertical surfaces using normal vector estimation and assign classification.
-    
-    Args:
-        points (np.ndarray): Nx3 array of points (x, y, z).
-        points_attributes (dict): Dictionary of point attributes including 'classification'.
-        angle_threshold (float): Max angle from horizontal for vertical surfaces (degrees).
-        search_radius (float): Radius for KDTree search during normal estimation.
-        max_nn (int): Max number of neighbors for normal estimation.
-    
     Returns:
-        dict: Updated points_attributes with vertical surfaces classified.
+    --------
+    dict
+        The updated `points_attributes` with `WALL_CLASSIFICATION` assigned where applicable.
     """
-    
-    log.debug(
-        "Segmenting vertical surfaces using normal-based filtering (angle_threshold=%.1f, search_radius=%.2f, max_nn=%d)...",
-        angle_threshold, search_radius, max_nn
-    )
-    
-    # Create temporary Open3D point cloud for normal estimation
+
+    # input validation
+    if not isinstance(points, np.ndarray):
+        raise TypeError("points must be a numpy.ndarray of shape (N,3)")
+    if points.ndim != 2 or points.shape[1] < 3:
+        raise ValueError("points must have shape (N,3)")
+    if 'classification' not in points_attributes:
+        raise KeyError("points_attributes must contain 'classification'")
+
+    classification = np.asarray(points_attributes['classification'])
+    if classification.shape[0] != points.shape[0]:
+        raise ValueError("length of points_attributes['classification'] does not match number of points")
+
+    # Convert to Open3D point cloud
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
-    
-    log.debug("Estimating normals for %d points...", len(points))
 
-    # Estimate normals
-    pcd.estimate_normals(
-        search_param=o3d.geometry.KDTreeSearchParamHybrid(
-            radius=search_radius,
-            max_nn=max_nn
+    # Results storage (kept for logging/debugging)
+    detected_planes = []
+    plane_points_list = []
+    plane_indices_list = []
+    wall_indices = []
+
+    # Keep track of remaining points
+    remaining_indices = np.arange(len(points))
+    remaining_pcd = pcd
+
+    plane_id = 0
+
+    log.info("Starting RANSAC detection on %d points...", len(points))
+
+    while len(remaining_indices) > len(points) * min_plane_size_ratio:
+        # Apply RANSAC to detect one plane
+        plane_model, inliers = remaining_pcd.segment_plane(
+            distance_threshold=epsilon,
+            ransac_n=3,
+            num_iterations=max_iterations
         )
-    )
 
-    log.debug("Orienting normals consistently...")
+        # Check if enough inliers found
+        if len(inliers) < min_support_points:
+            log.info("Stopping: Found only %d inliers (minimum: %d)", len(inliers), min_support_points)
+            break
 
-    # Orient normals consistently (optional but helpful)
-    pcd.orient_normals_consistent_tangent_plane(k=15)
-    
-    # Get normals
-    normals = np.asarray(pcd.normals)
-    
-    # Vertical surfaces have horizontal normals
-    # Z-component close to 0 means normal points sideways
+        # Extract plane parameters [a, b, c, d]
+        a, b, c, d = plane_model
 
-    log.debug("Classifying vertical surfaces based on normal vectors...")
+        # Normalize the normal vector
+        normal = np.array([a, b, c])
+        normal = normal / np.linalg.norm(normal)
 
-    angle_from_horizontal = np.abs(np.arcsin(np.clip(normals[:, 2], -1.0, 1.0))) * 180 / np.pi
-    
-    # Points are vertical if angle from horizontal < threshold
-    is_vertical = angle_from_horizontal < angle_threshold
-    
-    # Update classification: mark vertical surfaces only if currently unclassified
-    # Using classification value 6 for walls (standard LAS classification for buildings/structures)
+        # Check if this is a wall (vertical plane)
+        # A vertical plane has a normal vector mostly parallel to XY plane
+        # i.e., small Z component
+        angle_from_vertical = np.abs(np.arcsin(normal[2])) * 180 / np.pi
+        is_wall = angle_from_vertical <= max_normal_dev
 
-    log.debug("Updating classification for vertical surfaces...")
+        # Get actual point indices in original cloud
+        actual_indices = remaining_indices[inliers]
 
-    classification = points_attributes['classification']
-    is_vertical_and_unclassified = is_vertical & (classification == INIT_CLASSIFICATION)
-    classification[is_vertical_and_unclassified] = WALL_CLASSIFICATION
+        # Store results
+        detected_planes.append(plane_model)
+        plane_points_list.append(points[actual_indices])
+        plane_indices_list.append(actual_indices)
+
+        if is_wall:
+            wall_indices.append(plane_id)
+
+        log.debug("Plane %d: %d points, angle from vertical: %.2f°, is_wall: %s", 
+                  plane_id, len(inliers), angle_from_vertical, is_wall)
+
+        # Remove inliers from remaining points
+        remaining_indices = np.delete(remaining_indices, inliers)
+
+        if len(remaining_indices) == 0:
+            break
+
+        # Create new point cloud with remaining points
+        remaining_pcd = o3d.geometry.PointCloud()
+        remaining_pcd.points = o3d.utility.Vector3dVector(points[remaining_indices])
+
+        plane_id += 1
+
+    # Assign WALL_CLASSIFICATION to points that belong to detected wall planes
+    assigned_count = 0
+    for pid in wall_indices:
+        actual_indices = plane_indices_list[pid]
+        # only overwrite points that are still in INIT_CLASSIFICATION
+        mask_unclassified = classification[actual_indices] == INIT_CLASSIFICATION
+        if np.any(mask_unclassified):
+            idx_to_set = actual_indices[mask_unclassified]
+            classification[idx_to_set] = WALL_CLASSIFICATION
+            assigned_count += idx_to_set.size
+
     points_attributes['classification'] = classification
-    
-    num_vertical = np.sum(is_vertical)
-    num_non_vertical = np.sum(~is_vertical)
-    log.debug("Assigned classification: vertical=%d (%.1f%%), non-vertical=%d", 
-              num_vertical, 100 * num_vertical / len(points), num_non_vertical)
-    
+
+    log.info("RANSAC complete: %d planes found, %d walls detected, %d points labeled as WALL", 
+             len(detected_planes), len(wall_indices), assigned_count)
+
     return points_attributes

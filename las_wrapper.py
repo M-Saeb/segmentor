@@ -208,12 +208,9 @@ class LasWrapper:
             unclassified_attributes[dim] = arr[unclassified_indices]
         
         # Segment vertical surfaces on unclassified subset
-        updated_attributes = pcd_utils.segment_vertical_surfaces_normal_based_filtering(
+        updated_attributes = pcd_utils.apply_ransac_wall_detection(
             unclassified_points,
-            unclassified_attributes,
-            angle_threshold=15.0,
-            search_radius=0.5,
-            max_nn=30
+            unclassified_attributes
         )
         
         # Update classification in original array
