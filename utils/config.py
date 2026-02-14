@@ -7,6 +7,7 @@ class SegmentorConfig:
 
     # Pre-defined default parameters
     input_file: str = "./input.las"
+    reset_classification: bool = True
     filter_noise: bool = False
     chunk_size: int = 5_000_000
     ground_segmentation: dict = {

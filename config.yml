@@ -1,6 +1,8 @@
-input_file: "/mnt/e/Documents/Germany/FH Dortmund/5. Semster/Research Project/Code/file_grabber/result/office/office_og.las"
+input_file: "/home/mohammedalsalihi/LidarData/for_mohammed/office_test_1.las"
 
-filter_noise: true
+reset_classification: false
+
+filter_noise: false
 
 ground_segmentation:
   enable: true

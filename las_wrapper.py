@@ -55,8 +55,12 @@ class LasWrapper:
     
         # Initialize classification attribute for all points
         num_points = len(pcd.points)
-        classification = np.full(num_points, classses.INIT_CLASSIFICATION, dtype=np.uint8)
-        self._points_attributes['classification'] = classification
+        if self.config.reset_classification:
+            classification = np.full(num_points, classses.INIT_CLASSIFICATION, dtype=np.uint8)
+            self._points_attributes['classification'] = classification
+            log.debug("Reset classification")
+        else:
+            log.debug("Preserved original classification")
         log.info("Set up Open3D point cloud with %d points", len(self._pcd.points))
 
     def _read_file_in_chunks(self):
@@ -170,6 +174,7 @@ class LasWrapper:
         color_map = {
             classses.INIT_CLASSIFICATION: np.array([0.5, 0.5, 0.5]),  # unclassified -> gray
             classses.GROUND_CLASSIFICATION: np.array([0.0, 1.0, 0.0]),  # ground -> green
+            classses.WALL_CLASSIFICATION: np.array([0.0, 0.0, 1.0]),  # wall -> blue
         }
 
         colors = np.empty((len(cls), 3), dtype=float)
