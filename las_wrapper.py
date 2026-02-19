@@ -17,7 +17,9 @@ class LasWrapper:
         self.config = config.SegmentorConfig(config_file_path)
         self._pcd = o3d.geometry.PointCloud()
         self._points_attributes = {}
-        self._setup_o3d_points_and_attributes()
+        log.debug("Chunk size set to: %d", self.config.chunk_size)
+        log.debug("Reset classification is set to: %s", self.config.reset_classification)
+
 
     def _get_original_las_header(self):
         with laspy.open(self.config.input_file) as las:
@@ -30,38 +32,33 @@ class LasWrapper:
         new_header.scales = original_header.scales
         return new_header
 
-    def _setup_o3d_points_and_attributes(self):
-        pcd = o3d.geometry.PointCloud()
-        all_points = []
-        points_attributes = {}
+    def get_chunks_loop(self):
+        """
+        Read the LAS file in chunks and set up the Open3D point cloud and attributes.
+        """
         for points in self._read_file_in_chunks():
+            pcd = o3d.geometry.PointCloud()
+            points_attributes = {}
             xyz = np.vstack((points.x, points.y, points.z)).T
-            all_points.append(xyz)
+            pcd.points = o3d.utility.Vector3dVector(xyz)
+
             # Store all attributes except x, y, z
             for dim in points.point_format.dimension_names:
                 if dim not in ('x', 'y', 'z'):
                     if dim not in points_attributes:
                         points_attributes[dim] = []
                     points_attributes[dim].append(getattr(points, dim))
-        if all_points:
-            all_xyz = np.vstack(all_points)
-            pcd.points = o3d.utility.Vector3dVector(all_xyz)
-            # Concatenate all attribute arrays
+
             for dim, arrays in points_attributes.items():
                 points_attributes[dim] = np.concatenate(arrays)
-
-        self._pcd = pcd
-        self._points_attributes = points_attributes
     
-        # Initialize classification attribute for all points
-        num_points = len(pcd.points)
-        if self.config.reset_classification:
-            classification = np.full(num_points, classses.INIT_CLASSIFICATION, dtype=np.uint8)
-            self._points_attributes['classification'] = classification
-            log.debug("Reset classification")
-        else:
-            log.debug("Preserved original classification")
-        log.info("Set up Open3D point cloud with %d points", len(self._pcd.points))
+            # Initialize classification attribute for all points
+            num_points = len(pcd.points)
+            if self.config.reset_classification:
+                classification = np.full(num_points, classses.INIT_CLASSIFICATION, dtype=np.uint8)
+                points_attributes['classification'] = classification
+            
+            yield pcd, points_attributes
 
     def _read_file_in_chunks(self):
         orignal_header = self._get_original_las_header()
@@ -74,60 +71,66 @@ class LasWrapper:
                 log.debug("Read chunk %d with %d points", index, len(points))
                 yield points
 
-    def _update_pcd_and_points_attributes(self, indices):
+    def _update_pcd_and_points_attributes(self, pcd, points_attributes, indices):
         """
         Update the Open3D point cloud and attributes based on given indices.
         Args:
+            pcd: The Open3D point cloud to update
+            points_attributes: The dictionary of point attributes to update
             indices: Indices of points to keep
         """
-        self._pcd = self._pcd.select_by_index(indices)
-        for dim, arr in self._points_attributes.items():
-            self._points_attributes[dim] = arr[indices]
+        pcd = pcd.select_by_index(indices)
+        for dim, arr in points_attributes.items():
+            points_attributes[dim] = arr[indices]
+        return pcd, points_attributes
 
-    def filter_noise(self, nb_neighbors=20, std_ratio=2.0):
+    def filter_noise(self, index, pcd, points_attributes, nb_neighbors=20, std_ratio=2.0):
         """
         Remove statistical outliers from the Open3D point cloud and update attributes accordingly.
         Args:
+            pcv: The Open3D point cloud to filter
+            points_attributes: The dictionary of point attributes to filter
             nb_neighbors: Number of neighbors to analyze for each point.
             std_ratio: Standard deviation ratio threshold.
         """
-        log.info("Filtering noise using statistical outlier removal (nb_neighbors=%d, std_ratio=%f)...", nb_neighbors, std_ratio)
+        log.info("Chunk %d: Filtering noise", index)
         # Filter Open3D point cloud
-        _, ind = self._pcd.remove_statistical_outlier(
+        _, ind = pcd.remove_statistical_outlier(
             nb_neighbors=nb_neighbors,
             std_ratio=std_ratio
         )
-        self._update_pcd_and_points_attributes(ind)
-        log.info("Noise filtering complete. Remaining points: %d", len(self._pcd.points))
 
-    def write_to_file(self):
+        new_pcd = pcd.select_by_index(ind)
+        new_points_attributes = {}
+        for dim, arr in points_attributes.items():
+            new_points_attributes[dim] = arr[ind]
+
+        return new_pcd, new_points_attributes
+
+
+    def write_pcb_chunk_to_file(self, index, pcd, points_attributes):
         """
         Write the Open3D point cloud and all original attributes to a new LAS file.
         Args:
             output_path: Path to save the new .las file
         """
         output_file_path = self.config.result["write_to_file"]
-        log.info("Writing Open3D point cloud to %s in chunks...", output_file_path)
-        points = np.asarray(self._pcd.points)
+        log.debug("Writing chunk %d", index)
+        points = np.asarray(pcd.points)
 
-        num_points = points.shape[0]
-        chunk_size = self.config.chunk_size
         new_las_header = self._create_new_las_filer_header()
-        with laspy.open(output_file_path, mode="w", header=new_las_header) as writer:
-            for index in range(0, num_points, chunk_size):
-                chunk = points[index:index+chunk_size]
-                las_chunk = laspy.LasData(new_las_header)
-                las_chunk.x = chunk[:, 0]
-                las_chunk.y = chunk[:, 1]
-                las_chunk.z = chunk[:, 2]
-                # Restore all other attributes
-                for dim, arr in self._points_attributes.items():
-                    setattr(las_chunk, dim, arr[index:index+chunk_size])
-                writer.write_points(las_chunk.points)
-                log.debug("Wrote chunk %d points", index//chunk_size)
-        log.info("Finished writing Open3D point cloud to LAS file")
+        with laspy.open(output_file_path, mode="a", header=new_las_header) as writer:
+            las_chunk = laspy.LasData(new_las_header)
+            las_chunk.x = points[:, 0]
+            las_chunk.y = points[:, 1]
+            las_chunk.z = points[:, 2]
+            # Restore all other attributes
+            for dim, arr in points_attributes.items():
+                setattr(las_chunk, dim, arr)
+            writer.append_points(las_chunk.points)
+            log.debug("Wrote chunk %d points", index)
 
-    def segment_ground(self):
+    def segment_ground(self, pcd, points_attributes):
         """
         Segment ground/non-ground by analyzing Z coordinate distribution and assign classification numbers.
         Steps:
@@ -139,9 +142,9 @@ class LasWrapper:
         segementation = self.config.ground_segmentation
         log.info("Segmenting ground points using method: %s", segementation['method'])
         if segementation['method'] == "basic":
-            self._points_attributes = pcd_utils.basic_ground_filter(
-                np.asarray(self._pcd.points),
-                self._points_attributes,
+            points_attributes = pcd_utils.basic_ground_filter(
+                np.asarray(pcd.points),
+                points_attributes,
                 z_threshold=None
             )
         elif segementation['method'] == "csf":
@@ -149,9 +152,9 @@ class LasWrapper:
             resolution = segementation['csf_params']['resolution']
             rigidness = segementation['csf_params']['rigidness']
             max_iter = segementation['csf_params']['max_iter']
-            self._points_attributes = pcd_utils.cloth_simulation_filter(
-                np.asarray(self._pcd.points),
-                self._points_attributes,
+            points_attributes = pcd_utils.cloth_simulation_filter(
+                np.asarray(pcd.points),
+                points_attributes,
                 threshold_factor=threshold_factor,
                 resolution=resolution,
                 rigidness=rigidness,
@@ -160,6 +163,7 @@ class LasWrapper:
         else:
             log.error("Unknown ground filter method: %s", segementation['method'])
             raise ValueError(f"Unknown ground filter method: {segementation['method']}")
+        return pcd, points_attributes
         
     def display_pcb(self):
         log.info("Displaying point cloud with classification-based coloring...")
@@ -222,17 +226,20 @@ class LasWrapper:
         self._points_attributes['classification'][unclassified_indices] = updated_attributes['classification']
 
     def run_steps(self):
-        if self.config.filter_noise:
-            self.filter_noise()
 
-        if self.config.ground_segmentation["enable"]:
-            self.segment_ground()
+        for index, [pcd, points_attributes] in enumerate(self.get_chunks_loop()):
+            if self.config.filter_noise:
+                pcd, points_attributes = self.filter_noise(index, pcd, points_attributes)
 
-        if self.config.wall_segmentation["enable"]:
-            self.segment_vertical_surfaces()
+            if self.config.ground_segmentation["enable"]:
+                pcd, points_attributes = self.segment_ground(pcd, points_attributes)
 
-        if self.config.result["write_to_file"]:
-            self.write_to_file()
+            if self.config.wall_segmentation["enable"]:
+                self.segment_vertical_surfaces()
 
-        if self.config.result["display_result"]:
-            self.display_pcb()
+            if self.config.result["display_result"]:
+                self.display_pcb()
+
+            if self.config.result["write_to_file"]:
+                self.write_pcb_chunk_to_file(index, pcd, points_attributes)
+                log.info("Chunk %d: Point cloud written", index)
