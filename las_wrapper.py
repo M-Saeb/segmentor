@@ -227,6 +227,10 @@ class LasWrapper:
 
     def run_steps(self):
 
+        with laspy.open(self.config.result["write_to_file"], mode="w", header=self._create_new_las_filer_header()) as writer:
+            pass
+
+
         for index, [pcd, points_attributes] in enumerate(self.get_chunks_loop()):
             if self.config.filter_noise:
                 pcd, points_attributes = self.filter_noise(index, pcd, points_attributes)
