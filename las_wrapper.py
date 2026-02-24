@@ -187,6 +187,7 @@ class LasWrapper:
             pcd = pcd_utils.apply_classification_colors(pcd, points_attributes)
 
         o3d.visualization.draw_geometries([pcd])
+        pcd_utils.take_screenshot(pcd)
 
     def segment_vertical_surfaces(self):
         """

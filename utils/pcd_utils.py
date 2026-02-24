@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import open3d as o3d
 from  utils import log_utils
@@ -346,3 +347,54 @@ def apply_rgb_colors(pcd, points_attributes):
 
     pcd.colors = o3d.utility.Vector3dVector(rgb)
     return pcd
+
+def take_screenshot(pcd, dir_name):
+    """
+    Save two screenshots of the point cloud, approximating
+    CloudCompare's "front isometric" and "back isometric" views.
+
+    Images are saved as:
+        {dir_name}/front_isometric.png
+        {dir_name}/back_isometric.png
+    """
+    if not os.path.exists(dir_name):
+        os.mkdir(dir_name)
+
+    width, height = 640, 480
+    renderer = o3d.visualization.rendering.OffscreenRenderer(width, height)
+
+    # Setup scene & material
+    mat = o3d.visualization.rendering.MaterialRecord()
+    mat.shader = "defaultUnlit"
+    renderer.scene.add_geometry("cloud", pcd, mat)
+
+    # Basic geometry info
+    center = np.asarray(pcd.get_center(), dtype=float)
+    bounds = pcd.get_axis_aligned_bounding_box()
+    diag = float((bounds.get_max_bound() - bounds.get_min_bound()).max())
+
+    # Distance of camera from center (scaled by bbox size)
+    radius = max(1e-6, diag * 1.5)
+    up = [0.0, 0.0, 1.0]
+
+    # Approximate isometric angles: ~35° elevation, 45° and 225° azimuth
+    elev_deg = 35.0
+    elev = np.deg2rad(elev_deg)
+    z_off = radius * np.sin(elev)
+    horiz_r = radius * np.cos(elev)
+
+    views = {
+        "front_isometric": 225.0,
+        "back_isometric": 45.0,
+    }
+
+    for name, az_deg in views.items():
+        theta = np.deg2rad(az_deg)
+        # orbit in XY plane around Z-up axis
+        x_off = horiz_r * np.cos(theta)
+        y_off = horiz_r * np.sin(theta)
+        eye = center + np.array([x_off, y_off, z_off], dtype=float)
+
+        renderer.setup_camera(60.0, center, eye, up)
+        img = renderer.render_to_image()
+        o3d.io.write_image(os.path.join(dir_name, f"{name}.png"), img)
