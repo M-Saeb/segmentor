@@ -373,8 +373,8 @@ def take_screenshot(pcd, dir_name):
     bounds = pcd.get_axis_aligned_bounding_box()
     diag = float((bounds.get_max_bound() - bounds.get_min_bound()).max())
 
-    # Distance of camera from center (scaled by bbox size)
-    radius = max(1e-6, diag * 1.5)
+    # Distance of camera from center (scaled by bbox size) - slightly zoomed in
+    radius = max(1e-6, diag * 1.0)
     up = [0.0, 0.0, 1.0]
 
     # Approximate isometric angles: ~35° elevation, 45° and 225° azimuth

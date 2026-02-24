@@ -165,7 +165,7 @@ class LasWrapper:
             raise ValueError(f"Unknown ground filter method: {segementation['method']}")
         return pcd, points_attributes
         
-    def display_pcb(self, pcd, points_attributes, colors="classification"):
+    def display_pcb(self, pcd, points_attributes, colors="classification", only_none_classified=False):
         """
         Display the point cloud with a chosen coloring scheme.
 
@@ -175,26 +175,51 @@ class LasWrapper:
             colors: Either "classification" (default) or "rgb".
                 - "classification": use current classification-based coloring.
                 - "rgb": use the original RGB colors from the LAS attributes.
+            only_none_classified: If True, only visualize points whose classification
+                is still INIT_CLASSIFICATION (i.e., not clearly classified yet).
         """
 
+        # Optionally restrict to points that are not yet clearly classified.
+        display_pcd = pcd
+        display_attrs = points_attributes
+        if only_none_classified:
+            cls = points_attributes.get("classification", None)
+            cls_arr = np.asarray(cls)
+            mask = cls_arr == classses.INIT_CLASSIFICATION
+            if not np.any(mask):
+                log.info("No unclassified points to display; skipping visualization.")
+                return
 
+            indices = np.where(mask)[0]
+            display_pcd = pcd.select_by_index(indices)
+            # Filter all attributes consistently
+            filtered_attrs = {}
+            for dim, arr in points_attributes.items():
+                arr_np = np.asarray(arr)
+                if len(arr_np) == len(pcd.points):
+                    filtered_attrs[dim] = arr_np[indices]
+                else:
+                    # Keep attributes that don't match point count as-is
+                    filtered_attrs[dim] = arr
+            display_attrs = filtered_attrs
+
+        # Apply coloring scheme to the (possibly filtered) subset.
         if colors == "rgb":
-            pcd = pcd_utils.apply_rgb_colors(pcd, points_attributes)
+            display_pcd = pcd_utils.apply_rgb_colors(display_pcd, display_attrs)
         elif colors == "classification":
-            pcd = pcd_utils.apply_classification_colors(pcd, points_attributes)
+            display_pcd = pcd_utils.apply_classification_colors(display_pcd, display_attrs)
         else:
             log.warning("Unknown colors mode '%s'; defaulting to classification-based coloring.", colors)
-            pcd = pcd_utils.apply_classification_colors(pcd, points_attributes)
+            display_pcd = pcd_utils.apply_classification_colors(display_pcd, display_attrs)
 
-        o3d.visualization.draw_geometries([pcd])
-        pcd_utils.take_screenshot(pcd)
+        o3d.visualization.draw_geometries([display_pcd])
 
-    def segment_vertical_surfaces(self):
+    def segment_vertical_surfaces(self, pcd, points_attributes):
         """
         Segment vertical surfaces using normal vectors on unclassified points only.
         """
         # Filter to only unclassified points
-        classification = self._points_attributes['classification']
+        classification = points_attributes['classification']
         unclassified_mask = classification == classses.INIT_CLASSIFICATION
         unclassified_indices = np.where(unclassified_mask)[0]
         
@@ -203,11 +228,11 @@ class LasWrapper:
             return
         
         # Extract unclassified points and their attributes
-        points = np.asarray(self._pcd.points)
+        points = np.asarray(pcd.points)
         unclassified_points = points[unclassified_indices]
         
         unclassified_attributes = {}
-        for dim, arr in self._points_attributes.items():
+        for dim, arr in points_attributes.items():
             unclassified_attributes[dim] = arr[unclassified_indices]
         
         # Segment vertical surfaces on unclassified subset
@@ -217,7 +242,9 @@ class LasWrapper:
         )
         
         # Update classification in original array
-        self._points_attributes['classification'][unclassified_indices] = updated_attributes['classification']
+        points_attributes['classification'][unclassified_indices] = updated_attributes['classification']
+
+        return pcd, points_attributes
 
     def run_steps(self):
 
@@ -233,10 +260,11 @@ class LasWrapper:
                 pcd, points_attributes = self.segment_ground(pcd, points_attributes)
 
             if self.config.wall_segmentation["enable"]:
-                self.segment_vertical_surfaces()
+                pcd, points_attributes = self.segment_vertical_surfaces(pcd, points_attributes)
 
             if self.config.result["display_result"]:
-                self.display_pcb(pcd, points_attributes, colors="rgb")
+                self.display_pcb(pcd, points_attributes, colors="classification")
+                break
 
             if self.config.result["write_to_file"]:
                 self.write_pcb_chunk_to_file(index, pcd, points_attributes)
