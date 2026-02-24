@@ -165,35 +165,28 @@ class LasWrapper:
             raise ValueError(f"Unknown ground filter method: {segementation['method']}")
         return pcd, points_attributes
         
-    def display_pcb(self):
-        log.info("Displaying point cloud with classification-based coloring...")
-        # Try to color points using the 'classification' attribute if available
-        cls = self._points_attributes.get('classification', None)
-        if cls is None or len(cls) != len(self._pcd.points):
-            o3d.visualization.draw_geometries([self._pcd])
-            return
+    def display_pcb(self, pcd, points_attributes, colors="classification"):
+        """
+        Display the point cloud with a chosen coloring scheme.
 
-        cls = np.asarray(cls, dtype=int)
-        # predefined colors for known classes
-        color_map = {
-            classses.INIT_CLASSIFICATION: np.array([0.5, 0.5, 0.5]),  # unclassified -> gray
-            classses.GROUND_CLASSIFICATION: np.array([0.0, 1.0, 0.0]),  # ground -> green
-            classses.WALL_CLASSIFICATION: np.array([0.0, 0.0, 1.0]),  # wall -> blue
-        }
+        Args:
+            pcd: Open3D point cloud.
+            points_attributes: dict of point attributes (e.g., 'classification', 'red', 'green', 'blue').
+            colors: Either "classification" (default) or "rgb".
+                - "classification": use current classification-based coloring.
+                - "rgb": use the original RGB colors from the LAS attributes.
+        """
 
-        colors = np.empty((len(cls), 3), dtype=float)
-        for i, c in enumerate(cls):
-            if c in color_map:
-                colors[i] = color_map[c]
-            else:
-                # deterministic fallback color per class id
-                ci = int(c)
-                colors[i] = np.array([((ci * 37) % 255) / 255.0,
-                                      ((ci * 61) % 255) / 255.0,
-                                      ((ci * 97) % 255) / 255.0])
 
-        self._pcd.colors = o3d.utility.Vector3dVector(colors)
-        o3d.visualization.draw_geometries([self._pcd])
+        if colors == "rgb":
+            pcd = pcd_utils.apply_rgb_colors(pcd, points_attributes)
+        elif colors == "classification":
+            pcd = pcd_utils.apply_classification_colors(pcd, points_attributes)
+        else:
+            log.warning("Unknown colors mode '%s'; defaulting to classification-based coloring.", colors)
+            pcd = pcd_utils.apply_classification_colors(pcd, points_attributes)
+
+        o3d.visualization.draw_geometries([pcd])
 
     def segment_vertical_surfaces(self):
         """
@@ -242,7 +235,7 @@ class LasWrapper:
                 self.segment_vertical_surfaces()
 
             if self.config.result["display_result"]:
-                self.display_pcb()
+                self.display_pcb(pcd, points_attributes, colors="rgb")
 
             if self.config.result["write_to_file"]:
                 self.write_pcb_chunk_to_file(index, pcd, points_attributes)

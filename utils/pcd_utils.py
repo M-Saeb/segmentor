@@ -295,3 +295,54 @@ def apply_ransac_wall_detection(
              len(detected_planes), len(wall_indices), assigned_count)
 
     return points_attributes
+
+def apply_classification_colors(pcd, points_attributes):
+    log.info("Displaying point cloud with classification-based coloring...")
+    cls = points_attributes.get('classification', None)
+    if cls is None or len(cls) != len(pcd.points):
+        raise ValueError("Classification attribute lengths do not match point count")
+
+    cls_arr = np.asarray(cls, dtype=int)
+    color_map = {
+        INIT_CLASSIFICATION: np.array([0.5, 0.5, 0.5]),  # unclassified -> gray
+        GROUND_CLASSIFICATION: np.array([0.0, 1.0, 0.0]),  # ground -> green
+        WALL_CLASSIFICATION: np.array([0.0, 0.0, 1.0]),  # wall -> blue
+    }
+
+    cls_colors = np.empty((len(cls_arr), 3), dtype=float)
+    for i, c in enumerate(cls_arr):
+        if c in color_map:
+            cls_colors[i] = color_map[c]
+        else:
+            # deterministic fallback color per class id
+            ci = int(c)
+            cls_colors[i] = np.array([
+                ((ci * 37) % 255) / 255.0,
+                ((ci * 61) % 255) / 255.0,
+                ((ci * 97) % 255) / 255.0,
+            ])
+
+    pcd.colors = o3d.utility.Vector3dVector(cls_colors)
+    return pcd
+
+
+def apply_rgb_colors(pcd, points_attributes):
+    log.info("Displaying point cloud with RGB-based coloring...")
+    red = points_attributes.get('red', None)
+    green = points_attributes.get('green', None)
+    blue = points_attributes.get('blue', None)
+
+    red = np.asarray(red)
+    green = np.asarray(green)
+    blue = np.asarray(blue)
+
+    if not (len(red) == len(green) == len(blue) == len(pcd.points)):
+        raise ValueError("RGB attribute lengths do not match point count; falling back to classification coloring.")
+
+    rgb = np.vstack((red, green, blue)).T.astype(float)
+    max_val = np.max(rgb)
+    if max_val > 0:
+        rgb /= max_val  # normalize to [0,1]
+
+    pcd.colors = o3d.utility.Vector3dVector(rgb)
+    return pcd
