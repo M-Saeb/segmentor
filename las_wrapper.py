@@ -107,6 +107,69 @@ class LasWrapper:
 
         return new_pcd, new_points_attributes
 
+    def filter_noise_for_none_classified_points(self, index, pcd, points_attributes, nb_neighbors=20, std_ratio=2.0):
+        """
+        Apply statistical noise filtering only to points that are still in the
+        initial (unclassified) state, keeping all classified points untouched.
+
+        Args:
+            index: Chunk index (for logging only).
+            pcd: Open3D point cloud to filter.
+            points_attributes: Dictionary of point attributes.
+            nb_neighbors: Number of neighbors for statistical outlier removal.
+            std_ratio: Standard deviation ratio threshold.
+        """
+        classification = points_attributes.get("classification", None)
+        if classification is None or len(classification) != len(pcd.points):
+            log.warning(
+                "filter_noise_for_none_classified_points called but 'classification' "
+                "is missing or has mismatched length; falling back to full-cloud noise filter."
+            )
+            return self.filter_noise(index, pcd, points_attributes, nb_neighbors, std_ratio)
+
+        classification = np.asarray(classification)
+        unclassified_mask = classification == classses.INIT_CLASSIFICATION
+        if not np.any(unclassified_mask):
+            log.info("No unclassified points to filter; returning original point cloud.")
+            return pcd, points_attributes
+
+        log.info("Chunk %d: Filtering noise on %d unclassified points", index, np.sum(unclassified_mask))
+
+        # Work on the unclassified subset only
+        unclassified_indices = np.where(unclassified_mask)[0]
+        subset_pcd = pcd.select_by_index(unclassified_indices)
+
+        # Run the same statistical outlier removal as in filter_noise, but on the subset
+        _, subset_keep_idx = subset_pcd.remove_statistical_outlier(
+            nb_neighbors=nb_neighbors,
+            std_ratio=std_ratio
+        )
+
+        # Map kept indices back to original indices
+        kept_unclassified_indices = unclassified_indices[subset_keep_idx]
+
+        # Build a global "keep" mask: all classified points are kept,
+        # unclassified points are kept only if they survived the filter.
+        num_points = len(pcd.points)
+        keep_mask = np.ones(num_points, dtype=bool)
+        # Start by dropping all unclassified points
+        keep_mask[unclassified_indices] = False
+        # Re-enable only the filtered unclassified points
+        keep_mask[kept_unclassified_indices] = True
+
+        final_indices = np.where(keep_mask)[0]
+        new_pcd = pcd.select_by_index(final_indices)
+
+        new_points_attributes = {}
+        for dim, arr in points_attributes.items():
+            arr_np = np.asarray(arr)
+            if len(arr_np) == num_points:
+                new_points_attributes[dim] = arr_np[final_indices]
+            else:
+                # Attributes not per-point (e.g., metadata) are kept as-is
+                new_points_attributes[dim] = arr
+
+        return new_pcd, new_points_attributes
 
     def write_pcb_chunk_to_file(self, index, pcd, points_attributes):
         """
@@ -262,10 +325,16 @@ class LasWrapper:
             if self.config.wall_segmentation["enable"]:
                 pcd, points_attributes = self.segment_vertical_surfaces(pcd, points_attributes)
 
+                if self.config.wall_segmentation["filter_noise_after_segmenetation"]:
+                    pcd, points_attributes  = self.filter_noise_for_none_classified_points(index, pcd, points_attributes )
+
+
             if self.config.result["display_result"]:
                 self.display_pcb(pcd, points_attributes, colors="classification")
-                break
+                # self.display_pcb(pcd, points_attributes, colors="rgb", only_none_classified=True)
 
             if self.config.result["write_to_file"]:
                 self.write_pcb_chunk_to_file(index, pcd, points_attributes)
                 log.info("Chunk %d: Point cloud written", index)
+
+            break

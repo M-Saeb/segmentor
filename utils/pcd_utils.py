@@ -165,8 +165,8 @@ def cloth_simulation_filter(points: np.ndarray, points_attributes, threshold_fac
 def apply_ransac_wall_detection(
     points: np.ndarray,
     points_attributes,
-    epsilon: float = 0.001,
-    min_support_points: int = 20000,
+    epsilon: float = 0.01,
+    min_support_points: int = 2000,
     max_normal_dev: float = 10.0,
     max_iterations: int = 1000,
     min_plane_size_ratio: float = 0.01

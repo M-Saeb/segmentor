@@ -21,7 +21,8 @@ class SegmentorConfig:
         }
     }
     wall_segmentation: dict = {
-        "enable": False
+        "enable": False,
+        "filter_noise_after_segmenetation": True,
     }
     result = {
         "display_result": True,

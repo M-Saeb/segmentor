@@ -15,6 +15,7 @@ ground_segmentation:
 
 wall_segmentation:
   enable: true
+  filter_noise_after_segmenetation: true
 
 result: # the resulted pointed cloud from the program
   display_result: false
