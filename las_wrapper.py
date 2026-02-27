@@ -1,7 +1,7 @@
 import laspy
 import open3d as o3d
 import numpy as np
-from utils import log_utils, pcd_utils, config, classses
+from models.utils import log_utils, pcd_utils, config, classses
 
 log = log_utils.get_dual_logger(__name__)
   
