@@ -7,16 +7,16 @@ log = log_utils.get_dual_logger(__name__)
   
 class LasWrapper:
 
-    def __init__(self, config_file_path):
+    def __init__(self, config: config.SegmentorConfig):
         """
         Wrapper to read LAS files either in chunks or bulk.
         Args:
             config_file_path: Path to the configuration YAML file
             chunk_size: Number of points to read per chunk (default 5 million)
         """
-        self.config = config.SegmentorConfig(config_file_path)
-        self._pcd = o3d.geometry.PointCloud()
-        self._points_attributes = {}
+        self.config = config
+        self.chunks_iter = iter(self._read_input_file_in_chunks())
+        self.current_chunk = next(self.chunks_iter)
         log.debug("Chunk size set to: %d", self.config.chunk_size)
         log.debug("Reset classification is set to: %s", self.config.reset_classification)
 
@@ -32,7 +32,7 @@ class LasWrapper:
         new_header.scales = original_header.scales
         return new_header
 
-    def get_chunks_loop(self):
+    def _read_input_file_in_chunks(self):
         """
         Read the LAS file in chunks and set up the Open3D point cloud and attributes.
         """
@@ -83,6 +83,9 @@ class LasWrapper:
         for dim, arr in points_attributes.items():
             points_attributes[dim] = arr[indices]
         return pcd, points_attributes
+
+    def get_current_chunk(self):
+        return self.current_chunk
 
     def filter_noise(self, index, pcd, points_attributes, nb_neighbors=20, std_ratio=2.0):
         """
@@ -315,7 +318,7 @@ class LasWrapper:
             pass
 
 
-        for index, [pcd, points_attributes] in enumerate(self.get_chunks_loop()):
+        for index, [pcd, points_attributes] in enumerate(self._read_input_file_in_chunks()):
             if self.config.filter_noise:
                 pcd, points_attributes = self.filter_noise(index, pcd, points_attributes)
 

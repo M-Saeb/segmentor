@@ -1,10 +1,10 @@
 import os
 import numpy as np
 import open3d as o3d
-from  utils import log_utils
+from .log_utils import get_dual_logger
 from .classses import INIT_CLASSIFICATION, GROUND_CLASSIFICATION, WALL_CLASSIFICATION
 
-log = log_utils.get_dual_logger(__name__)
+log = get_dual_logger(__name__)
 
 def create_histogram(array, num_bins=256):
     counts, bin_edges = np.histogram(array, bins=num_bins)

@@ -1,5 +1,4 @@
-from las_wrapper import LasWrapper
-
+from models.viewer import Viewer
 if __name__ == "__main__":
     import sys
     
@@ -10,5 +9,5 @@ if __name__ == "__main__":
     else:
         config_file = default_config_file
 
-    las_wrapper = LasWrapper(config_file)
-    las_wrapper.run_steps()
+    viewer = Viewer(config_file)
+    viewer.create_gui()
