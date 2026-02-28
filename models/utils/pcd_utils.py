@@ -13,6 +13,28 @@ def create_histogram(array, num_bins=256):
     return x, y
 
 
+def filter_noise(pcd, points_attributes, nb_neighbors=20, std_ratio=2.0):
+    """
+    Remove statistical outliers from the Open3D point cloud and update attributes accordingly.
+    Args:
+        pcv: The Open3D point cloud to filter
+        points_attributes: The dictionary of point attributes to filter
+        nb_neighbors: Number of neighbors to analyze for each point.
+        std_ratio: Standard deviation ratio threshold.
+    """
+    # Filter Open3D point cloud
+    _, ind = pcd.remove_statistical_outlier(
+        nb_neighbors=nb_neighbors,
+        std_ratio=std_ratio
+    )
+
+    new_pcd = pcd.select_by_index(ind)
+    new_points_attributes = {}
+    for dim, arr in points_attributes.items():
+        new_points_attributes[dim] = arr[ind]
+
+    return new_pcd, new_points_attributes
+
 
 def find_peak_and_drops(x, y, drop_threshold=0.10):
     peak_idx = np.argmax(y)

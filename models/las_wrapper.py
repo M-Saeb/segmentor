@@ -87,28 +87,10 @@ class LasWrapper:
     def get_current_chunk(self):
         return self.current_chunk
 
-    def filter_noise(self, index, pcd, points_attributes, nb_neighbors=20, std_ratio=2.0):
-        """
-        Remove statistical outliers from the Open3D point cloud and update attributes accordingly.
-        Args:
-            pcv: The Open3D point cloud to filter
-            points_attributes: The dictionary of point attributes to filter
-            nb_neighbors: Number of neighbors to analyze for each point.
-            std_ratio: Standard deviation ratio threshold.
-        """
-        log.info("Chunk %d: Filtering noise", index)
-        # Filter Open3D point cloud
-        _, ind = pcd.remove_statistical_outlier(
-            nb_neighbors=nb_neighbors,
-            std_ratio=std_ratio
-        )
+    def set_current_chunk(self, pcd, points_attributes):
+        self.current_chunk = pcd, points_attributes
 
-        new_pcd = pcd.select_by_index(ind)
-        new_points_attributes = {}
-        for dim, arr in points_attributes.items():
-            new_points_attributes[dim] = arr[ind]
 
-        return new_pcd, new_points_attributes
 
     def filter_noise_for_none_classified_points(self, index, pcd, points_attributes, nb_neighbors=20, std_ratio=2.0):
         """

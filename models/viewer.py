@@ -1,3 +1,4 @@
+from typing import Callable
 from open3d.visualization import gui, rendering
 import open3d as o3d
 from .utils.config import SegmentorConfig
@@ -14,6 +15,13 @@ class Viewer:
         self._window = None
         self._layout = None  # left control panel
         self._scene = None
+        # create init buttons
+        self.buttons = []
+        for _ in range(10):
+            btn = gui.Button("Template Button")
+            btn.horizontal_padding_em = 1.0
+            btn.visible = False
+            self.buttons.append(btn)
 
     def create_gui(self):
 
@@ -27,10 +35,11 @@ class Viewer:
         layout = gui.Vert(0.5 * em, gui.Margins(em, em, em, em))
         self._layout = layout
 
-        start_reading_las_btn = gui.Button("Start read LAS file")
-        start_reading_las_btn.horizontal_padding_em = 1.0
-        start_reading_las_btn.set_on_clicked(self._handle_reading_las_button)
-        self._layout.add_child(start_reading_las_btn)
+        # adding initial buttons to the layout
+        for btn in self.buttons:
+            self._layout.add_child(btn)
+
+        self.set_new_btn("Start read LAS file", self._handle_reading_las_button)
 
         # Create a SceneWidget to display the point cloud inside the same window
         self._scene = gui.SceneWidget()
@@ -58,6 +67,41 @@ class Viewer:
         self._window.set_on_layout(_on_layout)
 
         app.run()
+
+    def set_new_btn(self, title: str, callback: Callable):
+        btn = self._get_next_free_btn()
+        btn.text = title
+        btn.set_on_clicked(
+            self._btn_wrapper(callback)
+        )
+        btn.visible = True
+        return btn
+
+    def _get_next_free_btn(self):
+        for btn in self.buttons:
+            if not btn.visible:
+                return btn
+
+        raise RuntimeError("No Free Button Found")
+
+    def _reset_all_btns(self):
+        for btn in self.buttons:
+            btn.visible = False
+
+    def _btn_wrapper(self, callback):
+        log.info("button clicked")
+        return callback
+
+    def switch_to_next_pipeline_stage(self):
+        self._reset_all_btns()
+        self.controller.switch_to_next_pipeline_stage()
+        stage = self.controller.get_current_pipeline_stage()
+        if stage is None:
+            return
+        self.set_new_btn(
+            title=stage.name,
+            callback=lambda: self.controller.run_current_pipeline()
+        )
 
     def show_message(self, title, text):
 
@@ -87,7 +131,6 @@ class Viewer:
         return self._config.input_file
 
     def _handle_reading_las_button(self):
-        log.info("Clicked _handle_reading_las_button()")
         path = self._get_path()
         if not path:
             log.info("LAS File path not found")
@@ -95,8 +138,9 @@ class Viewer:
             return
 
         pcd = self.controller.get_display_pcd()
-        # Display the point cloud for the selected file
         self._display_point_cloud(pcd)
+        self.switch_to_next_pipeline_stage()
+
 
     def _display_point_cloud(self, pcd):
         # Render the point cloud inside the existing SceneWidget instead of a new window
