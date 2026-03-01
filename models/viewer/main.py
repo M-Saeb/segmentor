@@ -3,6 +3,7 @@ from open3d.visualization import gui, rendering
 from models.utils.config import SegmentorConfig
 from models.utils.log_utils import get_dual_logger
 from models.controller import  Controller
+from .input_layout import InputLayout
 
 log = get_dual_logger(__name__)
 
@@ -13,21 +14,9 @@ class Viewer:
         self.controller = Controller(self._config)
         self._window = None
         self._layout = None  # left control panel (container)
-        self._main_buttons_layout = None  # section for main buttons
-        self._custom_buttons_layout = None  # section for custom buttons
+        self._main_layout = None  # section for main buttons
+        self._input_layout = None
         self._scene = None
-        # create init buttons
-        self.custom_buttons = []
-        self.custom_numbers_input = []
-        for _ in range(3):
-            btn = gui.Button("Template Button")
-            btn.horizontal_padding_em = 1.0
-            btn.visible = False
-            self.custom_buttons.append(btn)
-            number_input = gui.NumberEdit(gui.NumberEdit.Type.INT)
-            # number_input.horizontal_padding_em = 1.0
-            number_input.visible = True
-            self.custom_buttons.append(number_input)
 
 
     def create_gui(self):
@@ -38,41 +27,39 @@ class Viewer:
         self._window = app.create_window("Point Cloud GUI", 1200, 700)
         em = self._window.theme.font_size
 
+        self._input_layout = InputLayout(em)
+
         # Vertical layout for controls (left panel)
         layout = gui.Vert(0.5 * em, gui.Margins(em, em, em, em))
         self._layout = layout
 
         # --- Main buttons section (structure only for now) ---
-        self._main_buttons_layout = gui.Vert(0.25 * em, gui.Margins(0, 0, 0, 0))
+        self._main_layout = gui.Vert(0.25 * em, gui.Margins(0, 0, 0, 0))
         rgb_colors_button = gui.Button("Apply RGB Colors")
         rgb_colors_button.horizontal_padding_em = 1.0
         rgb_colors_button.set_on_clicked(
             lambda: self.update_displayed_pcb("RGB")
         )
-        self._main_buttons_layout.add_child(rgb_colors_button)
+        self._main_layout.add_child(rgb_colors_button)
 
         classifactions_colors_button = gui.Button("Apply Classification Colors")
         classifactions_colors_button.horizontal_padding_em = 1.0
         classifactions_colors_button.set_on_clicked(
             lambda: self.update_displayed_pcb("Classification")
         )
-        self._main_buttons_layout.add_child(classifactions_colors_button)
+        self._main_layout.add_child(classifactions_colors_button)
 
-        self._layout.add_child(gui.Label("Main buttons"))
-        self._layout.add_child(self._main_buttons_layout)
+        self._layout.add_child(gui.Label("General"))
+        self._layout.add_child(self._main_layout)
 
         # --- Custom buttons section ---
-        self._custom_buttons_layout = gui.Vert(0.25 * em, gui.Margins(0, 0, 0, 0))
         self._layout.add_child(gui.Label("Custom buttons"))
-        # Attach the pre-created custom buttons into the custom section
+        self._layout.add_child(self._input_layout.o3d_gui)
 
-        for btn in self.custom_buttons:
-            self._custom_buttons_layout.add_child(btn)
-
-        self._layout.add_child(self._custom_buttons_layout)
-
-
-        self.set_new_custom_btn("Start read LAS file", self._handle_reading_las_button)
+        self._input_layout.set_custom_btn(
+            "Start read LAS file",
+            callback=lambda: self._input_btn_wrapper(self._handle_reading_las_button)
+        )
 
         # Create a SceneWidget to display the point cloud inside the same window
         self._scene = gui.SceneWidget()
@@ -101,41 +88,21 @@ class Viewer:
 
         app.run()
 
-    def set_new_custom_btn(self, title: str, callback: Callable):
-        btn = self._get_next_free_custom_btn()
-        btn.text = title
-        btn.set_on_clicked(
-            lambda: self._btn_wrapper(callback)
-        )
-        btn.visible = True
-        return btn
-
-    def _get_next_free_custom_btn(self):
-        for btn in self.custom_buttons:
-            if not btn.visible:
-                return btn
-
-        raise RuntimeError("No Free Button Found")
-
-    def _reset_all_custom_btns(self):
-        for btn in self.custom_buttons:
-            btn.visible = False
-
-    def _btn_wrapper(self, callback):
+    def _input_btn_wrapper(self, callback):
         log.info("button clicked %s", str(callback))
         callback()
         self.update_displayed_pcb()
         
 
     def switch_to_next_pipeline_stage(self):
-        self._reset_all_custom_btns()
+        self._input_layout.reset_all_custom_btns()
         self.controller.switch_to_next_pipeline_stage()
         stage = self.controller.get_current_pipeline_stage()
         if stage is None:
             return
-        self.set_new_custom_btn(
+        self._input_layout.set_custom_btn(
             title=stage.name,
-            callback=self.controller.run_current_pipeline
+            callback=lambda: self._input_btn_wrapper(self.controller.run_current_pipeline)
         )
 
     def show_message(self, title, text):
