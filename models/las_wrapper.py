@@ -1,7 +1,7 @@
 import laspy
 import open3d as o3d
 import numpy as np
-from models.utils import log_utils, pcd_utils, config, classses
+from models.utils import log_utils, pcd_utils, config, constants
 
 log = log_utils.get_dual_logger(__name__)
   
@@ -55,7 +55,7 @@ class LasWrapper:
             # Initialize classification attribute for all points
             num_points = len(pcd.points)
             if self.config.reset_classification:
-                classification = np.full(num_points, classses.INIT_CLASSIFICATION, dtype=np.uint8)
+                classification = np.full(num_points, constants.PCB_CLASSIFICATION_INIT, dtype=np.uint8)
                 points_attributes['classification'] = classification
             
             yield pcd, points_attributes
@@ -113,7 +113,7 @@ class LasWrapper:
             return self.filter_noise(index, pcd, points_attributes, nb_neighbors, std_ratio)
 
         classification = np.asarray(classification)
-        unclassified_mask = classification == classses.INIT_CLASSIFICATION
+        unclassified_mask = classification == constants.PCB_CLASSIFICATION_INIT
         if not np.any(unclassified_mask):
             log.info("No unclassified points to filter; returning original point cloud.")
             return pcd, points_attributes
@@ -233,7 +233,7 @@ class LasWrapper:
         if only_none_classified:
             cls = points_attributes.get("classification", None)
             cls_arr = np.asarray(cls)
-            mask = cls_arr == classses.INIT_CLASSIFICATION
+            mask = cls_arr == constants.PCB_CLASSIFICATION_INIT
             if not np.any(mask):
                 log.info("No unclassified points to display; skipping visualization.")
                 return
@@ -268,7 +268,7 @@ class LasWrapper:
         """
         # Filter to only unclassified points
         classification = points_attributes['classification']
-        unclassified_mask = classification == classses.INIT_CLASSIFICATION
+        unclassified_mask = classification == constants.PCB_CLASSIFICATION_INIT
         unclassified_indices = np.where(unclassified_mask)[0]
         
         if len(unclassified_indices) == 0:

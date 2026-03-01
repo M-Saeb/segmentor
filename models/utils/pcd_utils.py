@@ -2,7 +2,7 @@ import os
 import numpy as np
 import open3d as o3d
 from .log_utils import get_dual_logger
-from .classses import INIT_CLASSIFICATION, GROUND_CLASSIFICATION, WALL_CLASSIFICATION
+from . import constants
 
 log = get_dual_logger(__name__)
 
@@ -23,6 +23,7 @@ def filter_noise(pcd, points_attributes, nb_neighbors=20, std_ratio=2.0):
         std_ratio: Standard deviation ratio threshold.
     """
     # Filter Open3D point cloud
+    log.info("Apply filtering noise")
     _, ind = pcd.remove_statistical_outlier(
         nb_neighbors=nb_neighbors,
         std_ratio=std_ratio
@@ -75,7 +76,7 @@ def basic_ground_filter(points: np.ndarray, points_attributes, z_threshold):
         ground_mask = z_values <= x[right_idx]
         # Step 4: Update classification using previous values
         classification = points_attributes['classification']
-        classification[ground_mask] = GROUND_CLASSIFICATION
+        classification[ground_mask] = constants.PCB_CLASSIFICATION_INIT
         points_attributes['classification'] = classification
         log.debug("Assigned classification: ground=%d, non-ground=%d", np.sum(ground_mask), np.sum(~ground_mask))
         return points_attributes
@@ -178,7 +179,7 @@ def cloth_simulation_filter(points: np.ndarray, points_attributes, threshold_fac
 
     # Update classification using previous values
     classification = points_attributes['classification']
-    classification[is_ground] = GROUND_CLASSIFICATION
+    classification[is_ground] = constants.PCB_CLASSIFICATION_GROUND
     points_attributes['classification'] = classification
     log.debug("Assigned classification: ground=%d, non-ground=%d", np.sum(is_ground), np.sum(~is_ground))
     
@@ -306,10 +307,10 @@ def apply_ransac_wall_detection(
     for pid in wall_indices:
         actual_indices = plane_indices_list[pid]
         # only overwrite points that are still in INIT_CLASSIFICATION
-        mask_unclassified = classification[actual_indices] == INIT_CLASSIFICATION
+        mask_unclassified = classification[actual_indices] == constants.PCB_CLASSIFICATION_INIT
         if np.any(mask_unclassified):
             idx_to_set = actual_indices[mask_unclassified]
-            classification[idx_to_set] = WALL_CLASSIFICATION
+            classification[idx_to_set] = constants.PCB_CLASSIFICATION_WALL
             assigned_count += idx_to_set.size
 
     points_attributes['classification'] = classification
@@ -319,56 +320,6 @@ def apply_ransac_wall_detection(
 
     return points_attributes
 
-def apply_classification_colors(pcd, points_attributes):
-    log.info("Displaying point cloud with classification-based coloring...")
-    cls = points_attributes.get('classification', None)
-    if cls is None or len(cls) != len(pcd.points):
-        raise ValueError("Classification attribute lengths do not match point count")
-
-    cls_arr = np.asarray(cls, dtype=int)
-    color_map = {
-        INIT_CLASSIFICATION: np.array([0.5, 0.5, 0.5]),  # unclassified -> gray
-        GROUND_CLASSIFICATION: np.array([0.0, 1.0, 0.0]),  # ground -> green
-        WALL_CLASSIFICATION: np.array([0.0, 0.0, 1.0]),  # wall -> blue
-    }
-
-    cls_colors = np.empty((len(cls_arr), 3), dtype=float)
-    for i, c in enumerate(cls_arr):
-        if c in color_map:
-            cls_colors[i] = color_map[c]
-        else:
-            # deterministic fallback color per class id
-            ci = int(c)
-            cls_colors[i] = np.array([
-                ((ci * 37) % 255) / 255.0,
-                ((ci * 61) % 255) / 255.0,
-                ((ci * 97) % 255) / 255.0,
-            ])
-
-    pcd.colors = o3d.utility.Vector3dVector(cls_colors)
-    return pcd
-
-
-def apply_rgb_colors(pcd, points_attributes):
-    log.info("Displaying point cloud with RGB-based coloring...")
-    red = points_attributes.get('red', None)
-    green = points_attributes.get('green', None)
-    blue = points_attributes.get('blue', None)
-
-    red = np.asarray(red)
-    green = np.asarray(green)
-    blue = np.asarray(blue)
-
-    if not (len(red) == len(green) == len(blue) == len(pcd.points)):
-        raise ValueError("RGB attribute lengths do not match point count; falling back to classification coloring.")
-
-    rgb = np.vstack((red, green, blue)).T.astype(float)
-    max_val = np.max(rgb)
-    if max_val > 0:
-        rgb /= max_val  # normalize to [0,1]
-
-    pcd.colors = o3d.utility.Vector3dVector(rgb)
-    return pcd
 
 def take_screenshot(pcd, dir_name):
     """

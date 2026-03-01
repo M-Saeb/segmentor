@@ -1,6 +1,5 @@
 from typing import Callable
 from open3d.visualization import gui, rendering
-import open3d as o3d
 from .utils.config import SegmentorConfig
 from .utils.log_utils import get_dual_logger
 from .controller import  Controller
@@ -72,7 +71,7 @@ class Viewer:
         btn = self._get_next_free_btn()
         btn.text = title
         btn.set_on_clicked(
-            self._btn_wrapper(callback)
+            lambda: self._btn_wrapper(callback)
         )
         btn.visible = True
         return btn
@@ -89,8 +88,10 @@ class Viewer:
             btn.visible = False
 
     def _btn_wrapper(self, callback):
-        log.info("button clicked")
-        return callback
+        log.info("button clicked %s", str(callback))
+        callback()
+        self.update_displayed_pcb()
+        
 
     def switch_to_next_pipeline_stage(self):
         self._reset_all_btns()
@@ -100,7 +101,7 @@ class Viewer:
             return
         self.set_new_btn(
             title=stage.name,
-            callback=lambda: self.controller.run_current_pipeline()
+            callback=self.controller.run_current_pipeline
         )
 
     def show_message(self, title, text):
@@ -136,10 +137,12 @@ class Viewer:
             log.info("LAS File path not found")
             self.show_message("No file", "Please select or enter a point cloud file path first.")
             return
-
-        pcd = self.controller.get_display_pcd()
-        self._display_point_cloud(pcd)
+        self.update_displayed_pcb()
         self.switch_to_next_pipeline_stage()
+
+    def update_displayed_pcb(self):
+        pcd = self.controller.get_display_pcd("Classification")
+        self._display_point_cloud(pcd)
 
 
     def _display_point_cloud(self, pcd):

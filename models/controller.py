@@ -59,10 +59,14 @@ class Controller:
         current_stage.func(**kwargs)
 
 
-    def get_display_pcd(self):
+    def get_display_pcd(self, color="RGB"):
         pcd, points_attributes = self.las_wrapper.get_current_chunk()
         visualizer = PCBVisualizer(pcd, points_attributes)
-        visualizer.apply_rgb_colors()
+        visualizer.apply_compress()
+        if color == "RGB":
+            visualizer.apply_rgb_colors()
+        elif color == "Classification":
+            visualizer.apply_classfication_colors()
         return visualizer.pcd
 
 
