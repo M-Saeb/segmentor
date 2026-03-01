@@ -1,8 +1,8 @@
 from typing import Callable
 from open3d.visualization import gui, rendering
-from .utils.config import SegmentorConfig
-from .utils.log_utils import get_dual_logger
-from .controller import  Controller
+from models.utils.config import SegmentorConfig
+from models.utils.log_utils import get_dual_logger
+from models.controller import  Controller
 
 log = get_dual_logger(__name__)
 
@@ -18,11 +18,17 @@ class Viewer:
         self._scene = None
         # create init buttons
         self.custom_buttons = []
-        for _ in range(10):
+        self.custom_numbers_input = []
+        for _ in range(3):
             btn = gui.Button("Template Button")
             btn.horizontal_padding_em = 1.0
             btn.visible = False
             self.custom_buttons.append(btn)
+            number_input = gui.NumberEdit(gui.NumberEdit.Type.INT)
+            # number_input.horizontal_padding_em = 1.0
+            number_input.visible = True
+            self.custom_buttons.append(number_input)
+
 
     def create_gui(self):
 

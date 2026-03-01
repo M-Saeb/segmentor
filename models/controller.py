@@ -10,7 +10,7 @@ class PipelineStage:
     name: str
     func: Callable
     inputs: List[
-        Dict[str, str]
+        Dict[str, any]
     ] = dataclasses.field(default_factory=list)
 
 @dataclasses.dataclass
@@ -30,9 +30,14 @@ class Controller:
             new_pipeline.stages.append(
                 PipelineStage(
                     name="Filter Noise",
-                    func=lambda: self._pipeline_functions_wrapper(
-                        pcd_utils.filter_noise
-                    )
+                    func=lambda **kwargs: self._pipeline_functions_wrapper(
+                        pcd_utils.filter_noise,
+                        **kwargs
+                    ),
+                    inputs=[
+                        {"nb_neighbors": 20},
+                        {"std_ratio": 2.0}
+                    ]
                 )
             )
         if len(new_pipeline.stages) == 0:
@@ -40,9 +45,10 @@ class Controller:
 
         return new_pipeline
 
-    def _pipeline_functions_wrapper(self, callback):
+    def _pipeline_functions_wrapper(self, callback, **kwargs):
         pcd, points_attributes = callback(
-            *self.las_wrapper.get_current_chunk()
+            *self.las_wrapper.get_current_chunk(),
+            **kwargs
         )
         self.las_wrapper.set_current_chunk(pcd, points_attributes)
 
