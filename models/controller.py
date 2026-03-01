@@ -62,7 +62,9 @@ class Controller:
     def get_display_pcd(self, color="RGB"):
         pcd, points_attributes = self.las_wrapper.get_current_chunk()
         visualizer = PCBVisualizer(pcd, points_attributes)
-        visualizer.apply_compress()
+        visualizer.apply_compress(
+            max_points=self.config.previewer["maximum_points"]
+        )
         if color == "RGB":
             visualizer.apply_rgb_colors()
         elif color == "Classification":

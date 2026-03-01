@@ -15,12 +15,12 @@ class Viewer:
         self._layout = None  # left control panel
         self._scene = None
         # create init buttons
-        self.buttons = []
+        self.custom_buttons = []
         for _ in range(10):
             btn = gui.Button("Template Button")
             btn.horizontal_padding_em = 1.0
             btn.visible = False
-            self.buttons.append(btn)
+            self.custom_buttons.append(btn)
 
     def create_gui(self):
 
@@ -35,10 +35,10 @@ class Viewer:
         self._layout = layout
 
         # adding initial buttons to the layout
-        for btn in self.buttons:
+        for btn in self.custom_buttons:
             self._layout.add_child(btn)
 
-        self.set_new_btn("Start read LAS file", self._handle_reading_las_button)
+        self.set_new_custom_btn("Start read LAS file", self._handle_reading_las_button)
 
         # Create a SceneWidget to display the point cloud inside the same window
         self._scene = gui.SceneWidget()
@@ -67,8 +67,8 @@ class Viewer:
 
         app.run()
 
-    def set_new_btn(self, title: str, callback: Callable):
-        btn = self._get_next_free_btn()
+    def set_new_custom_btn(self, title: str, callback: Callable):
+        btn = self._get_next_free_custom_btn()
         btn.text = title
         btn.set_on_clicked(
             lambda: self._btn_wrapper(callback)
@@ -76,15 +76,15 @@ class Viewer:
         btn.visible = True
         return btn
 
-    def _get_next_free_btn(self):
-        for btn in self.buttons:
+    def _get_next_free_custom_btn(self):
+        for btn in self.custom_buttons:
             if not btn.visible:
                 return btn
 
         raise RuntimeError("No Free Button Found")
 
-    def _reset_all_btns(self):
-        for btn in self.buttons:
+    def _reset_all_custom_btns(self):
+        for btn in self.custom_buttons:
             btn.visible = False
 
     def _btn_wrapper(self, callback):
@@ -94,12 +94,12 @@ class Viewer:
         
 
     def switch_to_next_pipeline_stage(self):
-        self._reset_all_btns()
+        self._reset_all_custom_btns()
         self.controller.switch_to_next_pipeline_stage()
         stage = self.controller.get_current_pipeline_stage()
         if stage is None:
             return
-        self.set_new_btn(
+        self.set_new_custom_btn(
             title=stage.name,
             callback=self.controller.run_current_pipeline
         )
@@ -143,7 +143,6 @@ class Viewer:
     def update_displayed_pcb(self):
         pcd = self.controller.get_display_pcd("Classification")
         self._display_point_cloud(pcd)
-
 
     def _display_point_cloud(self, pcd):
         # Render the point cloud inside the existing SceneWidget instead of a new window

@@ -1,8 +1,9 @@
 input_file: "/home/mohammedalsalihi/LidarData/for_mohammed/office_test_1.las"
 
-reset_classification: false
+previewer:
+  maximum_points: 500000
 
-filter_noise: false
+filter_noise: true
 
 ground_segmentation:
   enable: true

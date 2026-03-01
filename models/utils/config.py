@@ -10,6 +10,9 @@ class SegmentorConfig:
     reset_classification: bool = True
     filter_noise: bool = False
     chunk_size: int = 5_000_000
+    previewer = {
+        "maximum_points": 500_000
+    }
     ground_segmentation: dict = {
         "enable": True,
         "method": "basic",

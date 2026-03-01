@@ -10,7 +10,7 @@ class PCBVisualizer:
         self.pcd = pcd
         self.points_attributes = points_attributes
 
-    def apply_compress(self, max_points=500_000):
+    def apply_compress(self, max_points=100_000):
         num_points = len(self.pcd.points)
         if num_points == 0:
             log.info("apply_compress: point cloud is empty; nothing to compress.")
