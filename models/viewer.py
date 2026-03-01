@@ -12,7 +12,9 @@ class Viewer:
         self._config = SegmentorConfig(config)
         self.controller = Controller(self._config)
         self._window = None
-        self._layout = None  # left control panel
+        self._layout = None  # left control panel (container)
+        self._main_buttons_layout = None  # section for main buttons
+        self._custom_buttons_layout = None  # section for custom buttons
         self._scene = None
         # create init buttons
         self.custom_buttons = []
@@ -34,9 +36,35 @@ class Viewer:
         layout = gui.Vert(0.5 * em, gui.Margins(em, em, em, em))
         self._layout = layout
 
-        # adding initial buttons to the layout
+        # --- Main buttons section (structure only for now) ---
+        self._main_buttons_layout = gui.Vert(0.25 * em, gui.Margins(0, 0, 0, 0))
+        rgb_colors_button = gui.Button("Apply RGB Colors")
+        rgb_colors_button.horizontal_padding_em = 1.0
+        rgb_colors_button.set_on_clicked(
+            lambda: self.update_displayed_pcb("RGB")
+        )
+        self._main_buttons_layout.add_child(rgb_colors_button)
+
+        classifactions_colors_button = gui.Button("Apply Classification Colors")
+        classifactions_colors_button.horizontal_padding_em = 1.0
+        classifactions_colors_button.set_on_clicked(
+            lambda: self.update_displayed_pcb("Classification")
+        )
+        self._main_buttons_layout.add_child(classifactions_colors_button)
+
+        self._layout.add_child(gui.Label("Main buttons"))
+        self._layout.add_child(self._main_buttons_layout)
+
+        # --- Custom buttons section ---
+        self._custom_buttons_layout = gui.Vert(0.25 * em, gui.Margins(0, 0, 0, 0))
+        self._layout.add_child(gui.Label("Custom buttons"))
+        # Attach the pre-created custom buttons into the custom section
+
         for btn in self.custom_buttons:
-            self._layout.add_child(btn)
+            self._custom_buttons_layout.add_child(btn)
+
+        self._layout.add_child(self._custom_buttons_layout)
+
 
         self.set_new_custom_btn("Start read LAS file", self._handle_reading_las_button)
 
@@ -140,8 +168,8 @@ class Viewer:
         self.update_displayed_pcb()
         self.switch_to_next_pipeline_stage()
 
-    def update_displayed_pcb(self):
-        pcd = self.controller.get_display_pcd("Classification")
+    def update_displayed_pcb(self, color="Classification"):
+        pcd = self.controller.get_display_pcd(color)
         self._display_point_cloud(pcd)
 
     def _display_point_cloud(self, pcd):
