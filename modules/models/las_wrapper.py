@@ -1,7 +1,8 @@
 import laspy
 import open3d as o3d
 import numpy as np
-from models.utils import log_utils, pcd_utils, config, constants
+from modules.utils import log_utils, config, constants
+from . import pcd_tools
 
 log = log_utils.get_dual_logger(__name__)
   
@@ -190,7 +191,7 @@ class LasWrapper:
         segementation = self.config.ground_segmentation
         log.info("Segmenting ground points using method: %s", segementation['method'])
         if segementation['method'] == "basic":
-            points_attributes = pcd_utils.basic_ground_filter(
+            points_attributes = pcd_tools.basic_ground_filter(
                 np.asarray(pcd.points),
                 points_attributes,
                 z_threshold=None
@@ -200,7 +201,7 @@ class LasWrapper:
             resolution = segementation['csf_params']['resolution']
             rigidness = segementation['csf_params']['rigidness']
             max_iter = segementation['csf_params']['max_iter']
-            points_attributes = pcd_utils.cloth_simulation_filter(
+            points_attributes = pcd_tools.cloth_simulation_filter(
                 np.asarray(pcd.points),
                 points_attributes,
                 threshold_factor=threshold_factor,
@@ -253,12 +254,12 @@ class LasWrapper:
 
         # Apply coloring scheme to the (possibly filtered) subset.
         if colors == "rgb":
-            display_pcd = pcd_utils.apply_rgb_colors(display_pcd, display_attrs)
+            display_pcd = pcd_tools.apply_rgb_colors(display_pcd, display_attrs)
         elif colors == "classification":
-            display_pcd = pcd_utils.apply_classification_colors(display_pcd, display_attrs)
+            display_pcd = pcd_tools.apply_classification_colors(display_pcd, display_attrs)
         else:
             log.warning("Unknown colors mode '%s'; defaulting to classification-based coloring.", colors)
-            display_pcd = pcd_utils.apply_classification_colors(display_pcd, display_attrs)
+            display_pcd = pcd_tools.apply_classification_colors(display_pcd, display_attrs)
 
         o3d.visualization.draw_geometries([display_pcd])
 
@@ -284,7 +285,7 @@ class LasWrapper:
             unclassified_attributes[dim] = arr[unclassified_indices]
         
         # Segment vertical surfaces on unclassified subset
-        updated_attributes = pcd_utils.apply_ransac_wall_detection(
+        updated_attributes = pcd_tools.apply_ransac_wall_detection(
             unclassified_points,
             unclassified_attributes
         )

@@ -1,8 +1,7 @@
-from typing import Callable
 from open3d.visualization import gui, rendering
-from models.utils.config import SegmentorConfig
-from models.utils.log_utils import get_dual_logger
-from models.controller import  Controller
+from modules.utils.config import SegmentorConfig
+from modules.utils.log_utils import get_dual_logger
+from modules.controller import  Controller
 from .input_layout import InputLayout
 
 log = get_dual_logger(__name__)

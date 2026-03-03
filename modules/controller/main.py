@@ -1,9 +1,9 @@
 import dataclasses
 from typing import Callable, Dict, List
-from .utils.config import SegmentorConfig
-from .las_wrapper import LasWrapper
-from .pcb_visualizer import PCBVisualizer
-from models.utils import pcd_utils
+from modules.utils.config import SegmentorConfig
+from modules.models.las_wrapper import LasWrapper
+from modules.models import pcd_tools
+from .pcb_previewer import PCBPreviewer
 
 @dataclasses.dataclass
 class PipelineStage:
@@ -31,7 +31,7 @@ class Controller:
                 PipelineStage(
                     name="Filter Noise",
                     func=lambda **kwargs: self._pipeline_functions_wrapper(
-                        pcd_utils.filter_noise,
+                        pcd_tools.filter_noise,
                         **kwargs
                     ),
                     inputs=[
@@ -67,15 +67,15 @@ class Controller:
 
     def get_display_pcd(self, color="RGB"):
         pcd, points_attributes = self.las_wrapper.get_current_chunk()
-        visualizer = PCBVisualizer(pcd, points_attributes)
-        visualizer.apply_compress(
+        previewer = PCBPreviewer(pcd, points_attributes)
+        previewer.apply_compress(
             max_points=self.config.previewer["maximum_points"]
         )
         if color == "RGB":
-            visualizer.apply_rgb_colors()
+            previewer.apply_rgb_colors()
         elif color == "Classification":
-            visualizer.apply_classfication_colors()
-        return visualizer.pcd
+            previewer.apply_classfication_colors()
+        return previewer.pcd
 
 
 if __name__ == "__main__":

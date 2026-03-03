@@ -1,6 +1,6 @@
 from typing import Callable
 from open3d.visualization import gui
-from models.utils.log_utils import get_dual_logger
+from modules.utils.log_utils import get_dual_logger
 
 log = get_dual_logger(__name__)
 

@@ -1,11 +1,11 @@
 import numpy as np
 import open3d as o3d
-from .utils import constants
-from .utils.log_utils import get_dual_logger
+from modules.utils import constants
+from modules.utils.log_utils import get_dual_logger
 
 log = get_dual_logger(__name__)
 
-class PCBVisualizer:
+class PCBPreviewer:
     def __init__(self, pcd, points_attributes):
         self.pcd = pcd
         self.points_attributes = points_attributes

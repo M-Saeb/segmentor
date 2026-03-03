@@ -1,8 +1,8 @@
 import os
 import numpy as np
 import open3d as o3d
-from .log_utils import get_dual_logger
-from . import constants
+from modules.utils.log_utils import get_dual_logger
+from modules.utils import constants
 
 log = get_dual_logger(__name__)
 
@@ -11,7 +11,6 @@ def create_histogram(array, num_bins=256):
     x = (bin_edges[:-1] + bin_edges[1:]) / 2  # bin centers
     y = counts
     return x, y
-
 
 def filter_noise(pcd, points_attributes, nb_neighbors=20, std_ratio=2.0):
     """
