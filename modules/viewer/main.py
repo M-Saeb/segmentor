@@ -25,7 +25,9 @@ class Viewer:
         app = gui.Application.instance
         app.initialize()
 
-        self._window = app.create_window("Point Cloud GUI", 1200, 700)
+        # Create a larger main window so the interface is more spacious
+        self._window = app.create_window("Point Cloud GUI", 1600, 900)
+
         em = self._window.theme.font_size
 
         self._input_layout = InputLayout(em)
@@ -80,8 +82,8 @@ class Viewer:
         def _on_layout(theme):
             r = self._window.content_rect
 
-            # Reserve a fixed-width panel on the left for controls
-            panel_width = int(18 * em)
+            # Reserve a fixed-width panel on the left for controls (slightly wider)
+            panel_width = int(22 * em)
 
             self._layout.frame = gui.Rect(r.x, r.y, panel_width, r.height)
             self._preview_scene.frame = gui.Rect(
@@ -96,17 +98,17 @@ class Viewer:
 
         app.run()
 
-    def _stage_btn_wrapper(self):
+    def _stage_preview_btn_wrapper(self):
         """
-        Run the current pipeline stage on the preview chunk,
-        refresh the display, then advance to the next stage.
+        Run only the current setup pipeline stage on the preview chunk and
+        refresh the display, without advancing to the next stage.
         """
-        log.info("stage button clicked")
+        log.info("preview stage button clicked")
         if self._window is None:
             return
 
         # Show loading dialog immediately on the GUI thread.
-        self._show_loading("Running stage...")
+        self._show_loading("Running preview...")
 
         app = gui.Application.instance
 
@@ -115,13 +117,12 @@ class Viewer:
                 # Heavy computation runs in background thread.
                 self.controller.run_current_stage_of_setup_pipeline()
             except Exception:
-                log.exception("Error while running setup pipeline stage")
+                log.exception("Error while running setup pipeline stage preview")
 
             # Once done, update GUI on the main thread.
             def _on_done():
                 try:
                     self.update_preview_pcd()
-                    self.switch_to_next_stage_for_setup_pipeline()
                 finally:
                     self._hide_loading()
 
@@ -129,17 +130,41 @@ class Viewer:
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def switch_to_next_stage_for_setup_pipeline(self):
+    def _stage_confirm_btn_wrapper(self):
+        """
+        Confirm the current stage (keeping the last preview result) and
+        advance to the next stage, reconfiguring the UI accordingly.
+        """
+        log.info("confirm stage button clicked")
+        if self._window is None:
+            return
+
+        try:
+            next_stage = self.controller.confirm_current_stage_and_advance()
+        except Exception:
+            log.exception("Error while confirming setup pipeline stage")
+            return
+
+        # Clear existing buttons and, if there is a next stage, configure UI
+        # for it without advancing again.
+        self.switch_to_next_stage_for_setup_pipeline(advance=False)
+
+    def switch_to_next_stage_for_setup_pipeline(self, advance: bool = True):
         self._input_layout.reset_all_custom_btns()
-        self.controller.switch_to_next_setup_pipeline_stage()
+        if advance:
+            self.controller.switch_to_next_setup_pipeline_stage()
         stage = self.controller.get_current_setup_pipeline_stage()
         if stage is None:
             return
         # Reconfigure parameter controls for the newly selected stage.
         self._input_layout.configure_for_stage(stage)
         self._input_layout.set_custom_btn(
-            title=stage.name,
-            callback=self._stage_btn_wrapper
+            title=f"Run {stage.name}",
+            callback=self._stage_preview_btn_wrapper,
+        )
+        self._input_layout.set_custom_btn(
+            title=f"Confirm {stage.name}",
+            callback=self._stage_confirm_btn_wrapper,
         )
 
     def _run_full_processing(self):
