@@ -29,9 +29,6 @@ class Controller:
         self.setup_pipeline = self._create_setup_pipeline()
         # Will be populated later when building the full processing pipeline
         self.process_pipeline: Pipeline | None = None
-        # Snapshot of the current stage's input (pcd, points_attributes)
-        # used to support non-stacking interactive previews.
-        self._current_snapshot = None
 
     def _create_setup_pipeline(self) -> Pipeline:
         """
@@ -138,20 +135,12 @@ class Controller:
         current_stage = self.get_current_setup_pipeline_stage()
         if current_stage is None:
             # No more stages; clear any previous snapshot.
-            self._current_snapshot = None
+            self.las_wrapper.delete_snapshot()
             return
 
         # Snapshot the current preview chunk as the immutable input state
         # for all preview runs of this stage.
-        pcd, points_attributes = self.las_wrapper.get_current_chunk()
-        snapshot_pcd =  o3d.geometry.PointCloud(pcd)
-        snapshot_points_attributes = {
-            key: value.copy() for key, value in points_attributes.items()
-        }
-        self._current_snapshot = (
-            snapshot_pcd,
-            snapshot_points_attributes,
-        )
+        self.las_wrapper.save_snapshot()
 
     def get_current_setup_pipeline_stage(self):
         if self.setup_pipeline.current_stage_index >= len(self.setup_pipeline.stages):
@@ -165,13 +154,7 @@ class Controller:
 
         # Always start from the snapshotted input for this stage so that
         # repeated previews with different parameters do not stack effects.
-        if self._current_snapshot is not None:
-            base_pcd, base_points_attributes = self._current_snapshot
-            pcd = o3d.geometry.PointCloud(base_pcd)
-            points_attributes = {
-                key: value.copy() for key, value in base_points_attributes.items()
-            }
-            self.las_wrapper.set_current_chunk(pcd, points_attributes)
+        self.las_wrapper.restore_snapshot()
 
         # Merge stored params with any explicit overrides
         call_kwargs = {**current_stage.params, **kwargs}

@@ -1,3 +1,4 @@
+import os
 import laspy
 import open3d as o3d
 import numpy as np
@@ -89,6 +90,56 @@ class LasWrapper:
 
     def set_current_chunk(self, pcd, points_attributes):
         self.current_chunk = pcd, points_attributes
+
+    def save_snapshot(self):
+        pcd, points_attributes = self.get_current_chunk()
+        output_file_path = ".snapshot.las"
+        points = np.asarray(pcd.points)
+
+        new_las_header = self._create_new_las_filer_header()
+        with laspy.open(output_file_path, mode="w", header=new_las_header) as writer:
+            las_data = laspy.LasData(new_las_header)
+            las_data.x = points[:, 0]
+            las_data.y = points[:, 1]
+            las_data.z = points[:, 2]
+            # Restore all other attributes
+            for dim, arr in points_attributes.items():
+                setattr(las_data, dim, arr)
+            writer.write_points(las_data.points)
+            log.debug("Wrote snapshot")
+
+    def restore_snapshot(self):
+        input_file_path = ".snapshot.las"
+        with laspy.open(input_file_path) as reader:
+            las_data = reader.read()
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(np.vstack((las_data.x, las_data.y, las_data.z)).T)
+            points_attributes = {}
+            for dim in las_data.point_format.dimension_names:
+                if dim not in ('x', 'y', 'z'):
+                    points_attributes[dim] = getattr(las_data, dim)
+            self.set_current_chunk(pcd, points_attributes)
+            log.debug("Restored snapshot")
+
+    def get_snapshot(self):
+        input_file_path = ".snapshot.las"
+        with laspy.open(input_file_path) as reader:
+            las_data = reader.read()
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(np.vstack((las_data.x, las_data.y, las_data.z)).T)
+            points_attributes = {}
+            for dim in las_data.point_format.dimension_names:
+                if dim not in ('x', 'y', 'z'):
+                    points_attributes[dim] = getattr(las_data, dim)
+            return pcd, points_attributes
+
+    def delete_snapshot(self):
+        input_file_path = ".snapshot.las"
+        if os.path.exists(input_file_path):
+            os.remove(input_file_path)
+            log.info("Deleted snapshot")
+        else:
+            log.debug("Snapshot file does not exist")
 
     def iter_input_chunks(self):
         """
