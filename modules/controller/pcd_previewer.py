@@ -5,7 +5,7 @@ from modules.utils.log_utils import get_dual_logger
 
 log = get_dual_logger(__name__)
 
-class PCBPreviewer:
+class PCDPreviewer:
     def __init__(self, pcd, points_attributes):
         self.pcd = pcd
         self.points_attributes = points_attributes

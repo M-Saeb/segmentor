@@ -3,7 +3,7 @@ from typing import Callable, Dict, List
 from modules.utils.config import SegmentorConfig
 from modules.models.las_wrapper import LasWrapper
 from modules.models import pcd_tools
-from .pcb_previewer import PCBPreviewer
+from .pcd_previewer import PCDPreviewer
 
 @dataclasses.dataclass
 class PipelineStage:
@@ -87,14 +87,14 @@ class Controller:
         return PipelineStage(
             name="Ground Segmentation",
             func=lambda **kwargs: self._pipeline_functions_wrapper(
-                self.las_wrapper.segment_ground_with_params,
+                pcd_tools.segment_ground,
                 **kwargs,
             ),
             params=params,
         )
 
     def _make_wall_segmentation_stage(self) -> PipelineStage:
-        # Defaults mirror the algorithm defaults in pcd_tools.apply_ransac_wall_detection.
+        # Defaults mirror the algorithm defaults in pcd_tools.apply_wall_segmentation.
         params: Dict[str, object] = {
             "epsilon": 0.01,
             "min_support_points": 2000,
@@ -106,7 +106,7 @@ class Controller:
         return PipelineStage(
             name="Wall Segmentation",
             func=lambda **kwargs: self._pipeline_functions_wrapper(
-                self.las_wrapper.segment_vertical_surfaces_with_params,
+                pcd_tools.apply_wall_segmentation,
                 **kwargs,
             ),
             params=params,
@@ -118,8 +118,7 @@ class Controller:
         Uses a dummy index (0) since we only operate on the preview chunk here.
         """
         pcd, points_attributes = self.las_wrapper.get_current_chunk()
-        pcd, points_attributes = self.las_wrapper.filter_noise_for_none_classified_points(
-            index=0,
+        pcd, points_attributes = pcd_tools.filter_noise_for_none_classified_points(
             pcd=pcd,
             points_attributes=points_attributes,
             **kwargs,
@@ -180,27 +179,24 @@ class Controller:
         return pcd_tools.filter_noise(pcd, points_attributes, **kwargs)
 
     def _process_ground_segmentation_stage(self, pcd, points_attributes, **kwargs):
-        return self.las_wrapper.segment_ground_with_params(
+        return pcd_tools.segment_ground(
             pcd,
             points_attributes,
-            **kwargs,
+            **kwargs
         )
 
     def _process_wall_segmentation_stage(self, pcd, points_attributes, **kwargs):
-        return self.las_wrapper.segment_vertical_surfaces_with_params(
+        return pcd_tools.apply_wall_segmentation(
             pcd,
             points_attributes,
-            **kwargs,
+            **kwargs
         )
 
-    def _process_post_wall_noise_filter_stage(self, pcd, points_attributes, index=None, **kwargs):
-        # Use the real chunk index when provided; otherwise default to 0.
-        effective_index = 0 if index is None else index
-        return self.las_wrapper.filter_noise_for_none_classified_points(
-            effective_index,
+    def _process_post_wall_noise_filter_stage(self, pcd, points_attributes, **kwargs):
+        return pcd_tools.filter_noise_for_none_classified_points(
             pcd,
             points_attributes,
-            **kwargs,
+            **kwargs
         )
 
     def run_process_pipeline_on_all_chunks(self):
@@ -227,9 +223,6 @@ class Controller:
                     points_attributes=points_attributes,
                     **stage_kwargs,
                 )
-
-            if self.config.result.get("display_result"):
-                self.las_wrapper.display_pcb(pcd, points_attributes, colors="classification")
 
             if self.config.result.get("write_to_file"):
                 self.las_wrapper.write_pcb_chunk_to_file(index, pcd, points_attributes)
@@ -260,7 +253,7 @@ class Controller:
 
     def get_display_pcd(self, color="RGB"):
         pcd, points_attributes = self.las_wrapper.get_current_chunk()
-        previewer = PCBPreviewer(pcd, points_attributes)
+        previewer = PCDPreviewer(pcd, points_attributes)
         previewer.apply_compress(
             max_points=self.config.previewer["maximum_points"]
         )

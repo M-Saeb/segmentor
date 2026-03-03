@@ -184,6 +184,42 @@ def cloth_simulation_filter(points: np.ndarray, points_attributes, threshold_fac
     
     return points_attributes
 
+def segment_ground(
+    pcd,
+    points_attributes,
+    method=None,
+    threshold_factor=None,
+    resolution=None,
+    rigidness=None,
+    max_iter=None,
+):
+    """
+    Segment ground/non-ground with optional parameter overrides.
+    """
+    log.info("Segmenting ground points using method: %s", method)
+
+    if method == "basic":
+        points_attributes = basic_ground_filter(
+            np.asarray(pcd.points),
+            points_attributes,
+            z_threshold=None,
+        )
+    elif method == "csf":
+        points_attributes = cloth_simulation_filter(
+            np.asarray(pcd.points),
+            points_attributes,
+            threshold_factor=threshold_factor,
+            resolution=resolution,
+            rigidness=rigidness,
+            max_iter=max_iter,
+        )
+    else:
+        log.error("Unknown ground filter method: %s", method)
+        raise ValueError(f"Unknown ground filter method: {method}")
+
+    return pcd, points_attributes
+
+
 def apply_ransac_wall_detection(
     points: np.ndarray,
     points_attributes,
@@ -318,6 +354,110 @@ def apply_ransac_wall_detection(
              len(detected_planes), len(wall_indices), assigned_count)
 
     return points_attributes
+
+def apply_wall_segmentation(
+    pcd,
+    points_attributes,
+    epsilon: float = 0.01,
+    min_support_points: int = 2000,
+    max_normal_dev: float = 10.0,
+    max_iterations: int = 1000,
+    min_plane_size_ratio: float = 0.01,
+):
+    """
+    Wrapper around apply_ransac_wall_detection that works directly with an
+    Open3D PointCloud, similar to how segment_ground wraps cloth_simulation_filter().
+
+    Parameters
+    ----------
+    pcd : open3d.geometry.PointCloud
+        Point cloud to segment.
+    points_attributes : dict-like
+        Per-point attributes dictionary.
+    Other parameters are forwarded to apply_ransac_wall_detection.
+
+    Returns
+    -------
+    (pcd, points_attributes) : tuple
+        The original point cloud and updated attributes.
+    """
+    points = np.asarray(pcd.points)
+    points_attributes = apply_ransac_wall_detection(
+        points,
+        points_attributes,
+        epsilon=epsilon,
+        min_support_points=min_support_points,
+        max_normal_dev=max_normal_dev,
+        max_iterations=max_iterations,
+        min_plane_size_ratio=min_plane_size_ratio,
+    )
+    return pcd, points_attributes
+
+
+def filter_noise_for_none_classified_points(pcd, points_attributes, nb_neighbors=20, std_ratio=2.0):
+    """
+    Apply statistical noise filtering only to points that are still in the
+    initial (unclassified) state, keeping all classified points untouched.
+
+    Args:
+        index: Chunk index (for logging only).
+        pcd: Open3D point cloud to filter.
+        points_attributes: Dictionary of point attributes.
+        nb_neighbors: Number of neighbors for statistical outlier removal.
+        std_ratio: Standard deviation ratio threshold.
+    """
+    classification = points_attributes.get("classification", None)
+    if classification is None or len(classification) != len(pcd.points):
+        log.warning(
+            "filter_noise_for_none_classified_points called but 'classification' "
+            "is missing or has mismatched length; falling back to full-cloud noise filter."
+        )
+        return filter_noise(pcd, points_attributes, nb_neighbors, std_ratio)
+
+    classification = np.asarray(classification)
+    unclassified_mask = classification == constants.PCB_CLASSIFICATION_INIT
+    if not np.any(unclassified_mask):
+        log.info("No unclassified points to filter; returning original point cloud.")
+        return pcd, points_attributes
+
+    log.info("Filtering noise on %d unclassified points", np.sum(unclassified_mask))
+
+    # Work on the unclassified subset only
+    unclassified_indices = np.where(unclassified_mask)[0]
+    subset_pcd = pcd.select_by_index(unclassified_indices)
+
+    # Run the same statistical outlier removal as in filter_noise, but on the subset
+    _, subset_keep_idx = subset_pcd.remove_statistical_outlier(
+        nb_neighbors=nb_neighbors,
+        std_ratio=std_ratio
+    )
+
+    # Map kept indices back to original indices
+    kept_unclassified_indices = unclassified_indices[subset_keep_idx]
+
+    # Build a global "keep" mask: all classified points are kept,
+    # unclassified points are kept only if they survived the filter.
+    num_points = len(pcd.points)
+    keep_mask = np.ones(num_points, dtype=bool)
+    # Start by dropping all unclassified points
+    keep_mask[unclassified_indices] = False
+    # Re-enable only the filtered unclassified points
+    keep_mask[kept_unclassified_indices] = True
+
+    final_indices = np.where(keep_mask)[0]
+    new_pcd = pcd.select_by_index(final_indices)
+
+    new_points_attributes = {}
+    for dim, arr in points_attributes.items():
+        arr_np = np.asarray(arr)
+        if len(arr_np) == num_points:
+            new_points_attributes[dim] = arr_np[final_indices]
+        else:
+            # Attributes not per-point (e.g., metadata) are kept as-is
+            new_points_attributes[dim] = arr
+
+    return new_pcd, new_points_attributes
+
 
 
 def take_screenshot(pcd, dir_name):
