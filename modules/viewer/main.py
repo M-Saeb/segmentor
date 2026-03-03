@@ -48,6 +48,13 @@ class Viewer:
         )
         self._main_layout.add_child(classifactions_colors_button)
 
+        finalize_button = gui.Button("Finalize & Run Full Processing")
+        finalize_button.horizontal_padding_em = 1.0
+        finalize_button.set_on_clicked(
+            lambda: self._input_btn_wrapper(self._run_full_processing)
+        )
+        self._main_layout.add_child(finalize_button)
+
         self._layout.add_child(gui.Label("General"))
         self._layout.add_child(self._main_layout)
 
@@ -99,10 +106,20 @@ class Viewer:
         stage = self.controller.get_current_pipeline_stage()
         if stage is None:
             return
+        # Reconfigure parameter controls for the newly selected stage.
+        self._input_layout.configure_for_stage(stage)
         self._input_layout.set_custom_btn(
             title=stage.name,
             callback=lambda: self._input_btn_wrapper(self.controller.run_current_pipeline)
         )
+
+    def _run_full_processing(self):
+        """
+        Build the process pipeline from the current setup pipeline parameters
+        and run it over all chunks of the input file.
+        """
+        self.controller.build_process_pipeline_from_setup()
+        self.controller.run_process_pipeline_on_all_chunks()
 
     def show_message(self, title, text):
 

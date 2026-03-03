@@ -91,6 +91,26 @@ class LasWrapper:
     def set_current_chunk(self, pcd, points_attributes):
         self.current_chunk = pcd, points_attributes
 
+    def iter_input_chunks(self):
+        """
+        Public iterator over all input chunks as (index, pcd, points_attributes).
+        """
+        for index, (pcd, points_attributes) in enumerate(self._read_input_file_in_chunks()):
+            yield index, pcd, points_attributes
+
+    def initialize_output_file(self):
+        """
+        Create or truncate the output LAS file with a fresh header.
+        Subsequent writes should use write_pcb_chunk_to_file in append mode.
+        """
+        with laspy.open(
+            self.config.result["write_to_file"],
+            mode="w",
+            header=self._create_new_las_filer_header(),
+        ) as writer:
+            # Header is written on open; no points yet.
+            pass
+
 
 
     def filter_noise_for_none_classified_points(self, index, pcd, points_attributes, nb_neighbors=20, std_ratio=2.0):
@@ -179,40 +199,56 @@ class LasWrapper:
             writer.append_points(las_chunk.points)
             log.debug("Wrote chunk %d points", index)
 
-    def segment_ground(self, pcd, points_attributes):
+    def segment_ground_with_params(
+        self,
+        pcd,
+        points_attributes,
+        method=None,
+        threshold_factor=None,
+        resolution=None,
+        rigidness=None,
+        max_iter=None,
+    ):
         """
-        Segment ground/non-ground by analyzing Z coordinate distribution and assign classification numbers.
-        Steps:
-        1. Export Z to ScalarField
-        2. Find start/end of peak in Z histogram
-        3. Split cloud at peak end
-        4. Assign classification numbers
+        Segment ground/non-ground with optional parameter overrides.
         """
-        segementation = self.config.ground_segmentation
-        log.info("Segmenting ground points using method: %s", segementation['method'])
-        if segementation['method'] == "basic":
+        segmentation_cfg = getattr(self.config, "ground_segmentation", {})
+        effective_method = method or segmentation_cfg.get("method", "basic")
+        log.info("Segmenting ground points using method: %s", effective_method)
+
+        if effective_method == "basic":
             points_attributes = pcd_tools.basic_ground_filter(
                 np.asarray(pcd.points),
                 points_attributes,
-                z_threshold=None
+                z_threshold=None,
             )
-        elif segementation['method'] == "csf":
-            threshold_factor=segementation['csf_params']['threshold_factor']
-            resolution = segementation['csf_params']['resolution']
-            rigidness = segementation['csf_params']['rigidness']
-            max_iter = segementation['csf_params']['max_iter']
+        elif effective_method == "csf":
+            csf_cfg = segmentation_cfg.get("csf_params", {})
+            # Use overrides if provided, otherwise fall back to config/defaults
+            tf = threshold_factor if threshold_factor is not None else csf_cfg.get("threshold_factor", 0.1)
+            res = resolution if resolution is not None else csf_cfg.get("resolution", 1.0)
+            rig = rigidness if rigidness is not None else csf_cfg.get("rigidness", 3)
+            mi = max_iter if max_iter is not None else csf_cfg.get("max_iter", 500)
+
             points_attributes = pcd_tools.cloth_simulation_filter(
                 np.asarray(pcd.points),
                 points_attributes,
-                threshold_factor=threshold_factor,
-                resolution=resolution,
-                rigidness=rigidness,
-                max_iter=max_iter
+                threshold_factor=tf,
+                resolution=res,
+                rigidness=rig,
+                max_iter=mi,
             )
         else:
-            log.error("Unknown ground filter method: %s", segementation['method'])
-            raise ValueError(f"Unknown ground filter method: {segementation['method']}")
+            log.error("Unknown ground filter method: %s", effective_method)
+            raise ValueError(f"Unknown ground filter method: {effective_method}")
+
         return pcd, points_attributes
+
+    def segment_ground(self, pcd, points_attributes):
+        """
+        Backwards-compatible wrapper that uses configuration-only parameters.
+        """
+        return self.segment_ground_with_params(pcd, points_attributes)
         
     def display_pcb(self, pcd, points_attributes, colors="classification", only_none_classified=False):
         """
@@ -263,9 +299,19 @@ class LasWrapper:
 
         o3d.visualization.draw_geometries([display_pcd])
 
-    def segment_vertical_surfaces(self, pcd, points_attributes):
+    def segment_vertical_surfaces_with_params(
+        self,
+        pcd,
+        points_attributes,
+        epsilon=None,
+        min_support_points=None,
+        max_normal_dev=None,
+        max_iterations=None,
+        min_plane_size_ratio=None,
+    ):
         """
-        Segment vertical surfaces using normal vectors on unclassified points only.
+        Segment vertical surfaces using normal vectors on unclassified points only,
+        with optional parameter overrides passed through to the RANSAC routine.
         """
         # Filter to only unclassified points
         classification = points_attributes['classification']
@@ -283,17 +329,37 @@ class LasWrapper:
         unclassified_attributes = {}
         for dim, arr in points_attributes.items():
             unclassified_attributes[dim] = arr[unclassified_indices]
-        
+
+        # Prepare parameter overrides for RANSAC
+        algo_kwargs = {}
+        if epsilon is not None:
+            algo_kwargs["epsilon"] = epsilon
+        if min_support_points is not None:
+            algo_kwargs["min_support_points"] = min_support_points
+        if max_normal_dev is not None:
+            algo_kwargs["max_normal_dev"] = max_normal_dev
+        if max_iterations is not None:
+            algo_kwargs["max_iterations"] = max_iterations
+        if min_plane_size_ratio is not None:
+            algo_kwargs["min_plane_size_ratio"] = min_plane_size_ratio
+
         # Segment vertical surfaces on unclassified subset
         updated_attributes = pcd_tools.apply_ransac_wall_detection(
             unclassified_points,
-            unclassified_attributes
+            unclassified_attributes,
+            **algo_kwargs,
         )
         
         # Update classification in original array
         points_attributes['classification'][unclassified_indices] = updated_attributes['classification']
 
         return pcd, points_attributes
+
+    def segment_vertical_surfaces(self, pcd, points_attributes):
+        """
+        Backwards-compatible wrapper that uses default RANSAC parameters.
+        """
+        return self.segment_vertical_surfaces_with_params(pcd, points_attributes)
 
     def run_steps(self):
 
