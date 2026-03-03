@@ -3,7 +3,10 @@ from typing import Callable, Dict, List
 from modules.utils.config import SegmentorConfig
 from modules.models.las_wrapper import LasWrapper
 from modules.models import pcd_tools
+from modules.utils.log_utils import get_dual_logger
 from .pcd_previewer import PCDPreviewer
+
+log = get_dual_logger(__name__)
 
 @dataclasses.dataclass
 class PipelineStage:
@@ -23,8 +26,6 @@ class Controller:
         self.las_wrapper = LasWrapper(config)
         # Setup pipeline works on the current preview chunk
         self.setup_pipeline = self._create_setup_pipeline()
-        # Alias used by existing viewer code
-        self.pipeline = self.setup_pipeline
         # Will be populated later when building the full processing pipeline
         self.process_pipeline: Pipeline | None = None
 
@@ -45,7 +46,7 @@ class Controller:
         if wall_cfg.get("enable", False):
             new_pipeline.stages.append(self._make_wall_segmentation_stage())
             if wall_cfg.get("filter_noise_after_segmenetation", False):
-                new_pipeline.stages.append(self._make_post_wall_noise_filter_stage())
+                new_pipeline.stages.append(self._make_post_wall_segmentation_noise_filter_stage())
 
         if len(new_pipeline.stages) == 0:
             raise ValueError("No stages for the setup pipeline were created")
@@ -112,34 +113,39 @@ class Controller:
             params=params,
         )
 
-    def _run_filter_noise_for_unclassified(self, **kwargs):
-        """
-        Helper used in the setup pipeline to filter noise only on unclassified points.
-        Uses a dummy index (0) since we only operate on the preview chunk here.
-        """
-        pcd, points_attributes = self.las_wrapper.get_current_chunk()
-        pcd, points_attributes = pcd_tools.filter_noise_for_none_classified_points(
-            pcd=pcd,
-            points_attributes=points_attributes,
-            **kwargs,
-        )
-        self.las_wrapper.set_current_chunk(pcd, points_attributes)
-
-    def _make_post_wall_noise_filter_stage(self) -> PipelineStage:
+    def _make_post_wall_segmentation_noise_filter_stage(self) -> PipelineStage:
         # Reuse the same defaults as the initial noise filter.
         default_nb_neighbors = 20
         default_std_ratio = 2.0
         return PipelineStage(
             name="Post-wall Noise Filter",
-            func=lambda **kwargs: self._run_filter_noise_for_unclassified(**kwargs),
+            func=lambda **kwargs: self._pipeline_functions_wrapper(
+                pcd_tools.filter_noise_for_none_classified_points,
+                **kwargs,
+            ),
             params={
                 "nb_neighbors": default_nb_neighbors,
                 "std_ratio": default_std_ratio,
             },
         )
 
-    # ---- Process pipeline helpers ----
+    def switch_to_next_setup_pipeline_stage(self):
+        self.setup_pipeline.current_stage_index += 1
 
+    def get_current_setup_pipeline_stage(self):
+        if self.setup_pipeline.current_stage_index >= len(self.setup_pipeline.stages):
+            return None
+        return self.setup_pipeline.stages[self.setup_pipeline.current_stage_index]
+
+    def run_current_stage_of_setup_pipeline(self, **kwargs):
+        current_stage = self.get_current_setup_pipeline_stage()
+        if current_stage is None:
+            return
+        # Merge stored params with any explicit overrides
+        call_kwargs = {**current_stage.params, **kwargs}
+        current_stage.func(**call_kwargs)
+
+    # ---- Process pipeline helpers ----
     def build_process_pipeline_from_setup(self) -> Pipeline:
         """
         Clone the current setup pipeline into a process pipeline that operates
@@ -171,6 +177,7 @@ class Controller:
         else:
             # Fallback: reuse the same callable, assuming it accepts
             # (pcd, points_attributes, **params) for processing as well.
+            log.warning(f"Falling back: no process stage for {name} with params {params}")
             func = setup_stage.func
 
         return PipelineStage(name=name, func=func, params=params)
@@ -234,27 +241,10 @@ class Controller:
         )
         self.las_wrapper.set_current_chunk(pcd, points_attributes)
 
-    def switch_to_next_pipeline_stage(self):
-        self.pipeline.current_stage_index += 1
-
-    def get_current_pipeline_stage(self):
-        if self.pipeline.current_stage_index >= len(self.pipeline.stages):
-            return None
-        return self.pipeline.stages[self.pipeline.current_stage_index]
-
-    def run_current_pipeline(self, **kwargs):
-        current_stage = self.get_current_pipeline_stage()
-        if current_stage is None:
-            return
-        # Merge stored params with any explicit overrides
-        call_kwargs = {**current_stage.params, **kwargs}
-        current_stage.func(**call_kwargs)
-
-
-    def get_display_pcd(self, color="RGB"):
+    def get_preview_pcd(self, color="RGB"):
         pcd, points_attributes = self.las_wrapper.get_current_chunk()
         previewer = PCDPreviewer(pcd, points_attributes)
-        previewer.apply_compress(
+        previewer.apply_compression(
             max_points=self.config.previewer["maximum_points"]
         )
         if color == "RGB":
