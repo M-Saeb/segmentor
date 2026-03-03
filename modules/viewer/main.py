@@ -18,6 +18,7 @@ class Viewer:
         self._input_layout = None
         self._preview_scene = None
         self._loading_dialog = None
+        self._camera_initialized = False
 
 
     def create_gui(self):
@@ -249,7 +250,9 @@ class Viewer:
 
         self._preview_scene.scene.add_geometry("pcd", pcd, material)
 
-        # Set up the camera to nicely frame the point cloud
-        bounds = pcd.get_axis_aligned_bounding_box()
-        center = bounds.get_center()
-        self._preview_scene.setup_camera(60.0, bounds, center)
+        # Only set up the camera once; subsequent updates keep the current view
+        if not self._camera_initialized:
+            bounds = pcd.get_axis_aligned_bounding_box()
+            center = bounds.get_center()
+            self._preview_scene.setup_camera(60.0, bounds, center)
+            self._camera_initialized = True
