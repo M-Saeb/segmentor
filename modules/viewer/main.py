@@ -98,7 +98,16 @@ class Viewer:
         log.info("button clicked %s", str(callback))
         callback()
         self.update_displayed_pcb()
-        
+
+    def _stage_btn_wrapper(self):
+        """
+        Run the current pipeline stage on the preview chunk,
+        refresh the display, then advance to the next stage.
+        """
+        log.info("stage button clicked")
+        self.controller.run_current_pipeline()
+        self.update_displayed_pcb()
+        self.switch_to_next_pipeline_stage()
 
     def switch_to_next_pipeline_stage(self):
         self._input_layout.reset_all_custom_btns()
@@ -110,7 +119,7 @@ class Viewer:
         self._input_layout.configure_for_stage(stage)
         self._input_layout.set_custom_btn(
             title=stage.name,
-            callback=lambda: self._input_btn_wrapper(self.controller.run_current_pipeline)
+            callback=self._stage_btn_wrapper
         )
 
     def _run_full_processing(self):
