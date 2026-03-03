@@ -1,4 +1,5 @@
 from open3d.visualization import gui, rendering
+import threading
 from modules.utils.config import SegmentorConfig
 from modules.utils.log_utils import get_dual_logger
 from modules.controller import  Controller
@@ -16,6 +17,7 @@ class Viewer:
         self._main_layout = None  # section for main buttons
         self._input_layout = None
         self._preview_scene = None
+        self._loading_dialog = None
 
 
     def create_gui(self):
@@ -100,9 +102,32 @@ class Viewer:
         refresh the display, then advance to the next stage.
         """
         log.info("stage button clicked")
-        self.controller.run_current_stage_of_setup_pipeline()
-        self.update_preview_pcd()
-        self.switch_to_next_stage_for_setup_pipeline()
+        if self._window is None:
+            return
+
+        # Show loading dialog immediately on the GUI thread.
+        self._show_loading("Running stage...")
+
+        app = gui.Application.instance
+
+        def _worker():
+            try:
+                # Heavy computation runs in background thread.
+                self.controller.run_current_stage_of_setup_pipeline()
+            except Exception:
+                log.exception("Error while running setup pipeline stage")
+
+            # Once done, update GUI on the main thread.
+            def _on_done():
+                try:
+                    self.update_preview_pcd()
+                    self.switch_to_next_stage_for_setup_pipeline()
+                finally:
+                    self._hide_loading()
+
+            app.post_to_main_thread(self._window, _on_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def switch_to_next_stage_for_setup_pipeline(self):
         self._input_layout.reset_all_custom_btns()
@@ -147,6 +172,39 @@ class Viewer:
 
         dlg.add_child(layout)
         self._window.show_dialog(dlg)
+
+    def _show_loading(self, text: str = "Loading..."):
+        """
+        Show a simple modal 'loading' dialog while work is in progress.
+        """
+        if self._window is None:
+            return
+        if self._loading_dialog is not None:
+            # Already showing
+            return
+
+        em = self._window.theme.font_size
+        dlg = gui.Dialog("Please wait")
+        layout = gui.Vert(0.5 * em, gui.Margins(em, em, em, em))
+        layout.add_child(gui.Label(text))
+        dlg.add_child(layout)
+
+        self._loading_dialog = dlg
+        self._window.show_dialog(dlg)
+        log.info("_show_loading() hit: %s", text)
+
+    def _hide_loading(self):
+        """
+        Hide the loading dialog if it is currently shown.
+        """
+        if self._window is None:
+            return
+        if self._loading_dialog is None:
+            return
+
+        # close_dialog() closes the top-most dialog.
+        self._window.close_dialog()
+        self._loading_dialog = None
 
     def update_preview_pcd(self, color="Classification"):
         pcd = self.controller.get_preview_pcd(color)
