@@ -168,7 +168,7 @@ class LasWrapper:
             output_path: Path to save the new .las file
         """
         output_file_path = self.config.result["write_to_file"]
-        log.debug("Writing chunk %d", index)
+        log.info("vvv Writing chunk %d vvv", index)
         points = np.asarray(pcd.points)
 
         new_las_header = self._create_new_las_filer_header()
@@ -181,4 +181,5 @@ class LasWrapper:
             for dim, arr in points_attributes.items():
                 setattr(las_chunk, dim, arr)
             writer.append_points(las_chunk.points)
-            log.debug("Wrote chunk %d points", index)
+            log.info("^^^ Wrote chunk %d points ^^^", index)
+        

@@ -244,19 +244,19 @@ class Controller:
         if self.config.result.get("write_to_file"):
             self.las_wrapper.initialize_output_file()
 
+        destination_file_path = self.config.result["write_to_file"]
         for index, pcd, points_attributes in self.las_wrapper.iter_input_chunks():
             for stage in self.process_pipeline.stages:
                 stage_kwargs = dict(stage.params)
-                # Provide chunk index for stages that care about it.
-                stage_kwargs.setdefault("index", index)
                 pcd, points_attributes = stage.func(
                     pcd=pcd,
                     points_attributes=points_attributes,
                     **stage_kwargs,
                 )
 
-            if self.config.result.get("write_to_file"):
+            if destination_file_path:
                 self.las_wrapper.write_pcb_chunk_to_file(index, pcd, points_attributes)
+        log.info("===== Finished writing to: %s ======", destination_file_path)
 
     def _pipeline_functions_wrapper(self, callback, **kwargs):
         pcd, points_attributes = callback(
