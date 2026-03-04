@@ -29,7 +29,8 @@ class SegmentorConfig:
     }
     result = {
         "display_result": True,
-        "output_folder_path": "./result"
+        "output_folder_path": "./result",
+        "overwrite_output_folder": False
     }
 
     def __init__(self, config_file: str):

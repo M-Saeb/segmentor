@@ -3,8 +3,8 @@ from typing import Callable, Dict, List
 import open3d as o3d
 from modules.utils.config import SegmentorConfig
 from modules.models.las_wrapper import LasWrapper
+from modules.models.result_generator import ResultGenerator
 from modules.models import pcd_tools
-from modules.models import ResultGenerator
 from modules.utils.log_utils import get_dual_logger
 from .pcd_previewer import PCDPreviewer
 
@@ -25,7 +25,7 @@ class Pipeline:
 class Controller:
     def __init__(self, config: SegmentorConfig):
         self.config = config
-        self.las_wrapper = LasWrapper(config)
+        self.las_wrapper = LasWrapper(config, auto_read_input_file=True)
         self.result_generator = ResultGenerator(config)
         # Setup pipeline works on the current preview chunk
         self.setup_pipeline = self._create_setup_pipeline()

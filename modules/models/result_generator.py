@@ -1,11 +1,15 @@
 import os
+import shutil
 from modules.utils import config
 from modules.models.las_wrapper import LasWrapper
+from modules.utils.log_utils import get_dual_logger
+
+log = get_dual_logger(__name__)
 
 class ResultGenerator:
     def __init__(self, config: config.SegmentorConfig):
         self.config = config
-        self.las_wrapper = LasWrapper(config)
+        self.las_wrapper = LasWrapper(config, auto_read_input_file=False)
         self.output_folder_path = self._make_output_folder()
         self.full_las_path = os.path.join(self.output_folder_path, "output.las")
 
@@ -14,18 +18,26 @@ class ResultGenerator:
 
     def _make_output_folder(self):
         output_folder_path = self.config.result["output_folder_path"]
+        log.info("Output folder path: %s", output_folder_path)
         if not os.path.exists(output_folder_path):
             os.makedirs(
-                os.path.dirname(output_folder_path),
-                exist_ok=False
+                output_folder_path,
+                exist_ok=True
             )
         else:
-            # create increamental folder name
-            increment = 2
-            while os.path.exists(output_folder_path + f"_{increment}"):
-                increment += 1
-            output_folder_path = output_folder_path + f"_{increment}"
-            os.makedirs(output_folder_path, exist_ok=False)
+            log.info("Output folder already exists")
+            if self.config.result["overwrite_output_folder"]:
+                log.info("Overwriting output folder")
+                shutil.rmtree(output_folder_path)
+                os.makedirs(output_folder_path, exist_ok=True)
+            else:
+                log.info("Creating new output folder with increamental name")
+                # create increamental folder name
+                increment = 2
+                while os.path.exists(output_folder_path + f"_{increment}"):
+                    increment += 1
+                output_folder_path = output_folder_path + f"_{increment}"
+                os.makedirs(output_folder_path, exist_ok=False)
 
         return output_folder_path
 

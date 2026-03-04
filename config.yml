@@ -21,3 +21,4 @@ wall_segmentation:
 result: # the resulted pointed cloud from the program
   display_result: false
   output_folder_path: "/home/mohammedalsalihi/LidarData/for_mohammed/fh_underground_result"
+  overwrite_output_folder: false

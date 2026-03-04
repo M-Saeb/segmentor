@@ -8,7 +8,7 @@ log = log_utils.get_dual_logger(__name__)
   
 class LasWrapper:
 
-    def __init__(self, config: config.SegmentorConfig):
+    def __init__(self, config: config.SegmentorConfig, auto_read_input_file: bool = True):
         """
         Wrapper to read LAS files either in chunks or bulk.
         Args:
@@ -16,8 +16,9 @@ class LasWrapper:
             chunk_size: Number of points to read per chunk (default 5 million)
         """
         self.config = config
-        self.chunks_iter = iter(self._read_input_file_in_chunks())
-        self.current_chunk = next(self.chunks_iter)
+        if auto_read_input_file:
+            self.chunks_iter = iter(self._read_input_file_in_chunks())
+            self.current_chunk = next(self.chunks_iter)
         log.debug("Chunk size set to: %d", self.config.chunk_size)
         log.debug("Reset classification is set to: %s", self.config.reset_classification)
 
