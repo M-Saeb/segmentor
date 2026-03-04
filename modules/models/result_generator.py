@@ -1,5 +1,6 @@
 import os
 import shutil
+import yaml
 from modules.utils import config
 from modules.models.las_wrapper import LasWrapper
 from modules.utils.log_utils import get_dual_logger
@@ -40,6 +41,13 @@ class ResultGenerator:
                 os.makedirs(output_folder_path, exist_ok=False)
 
         return output_folder_path
+
+    def write_pipeline_yaml(self, pipeline_data: dict):
+        """Write the process pipeline (kind and stages with params) to pipeline.yml in the output folder."""
+        path = os.path.join(self.output_folder_path, "pipeline.yml")
+        with open(path, "w") as f:
+            yaml.safe_dump(pipeline_data, f, default_flow_style=False, sort_keys=False)
+        log.info("Wrote pipeline YAML to: %s", path)
 
     def write_las_chunk_to_file(self, index, pcd, points_attributes):
         self.las_wrapper.write_pcb_chunk_to_file(index, pcd, points_attributes, self.full_las_path)

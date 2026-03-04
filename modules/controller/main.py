@@ -22,6 +22,15 @@ class Pipeline:
     current_stage_index: int = -1  # starting from -1 to handle iteration
     kind: str = "setup"
 
+    def to_dict(self):
+        return {
+            "kind": self.kind,
+            "stages": [
+                {"name": stage.name, "params": dict(stage.params)}
+                for stage in self.stages
+            ],
+        }
+
 class Controller:
     def __init__(self, config: SegmentorConfig):
         self.config = config
@@ -241,6 +250,8 @@ class Controller:
 
         if self.process_pipeline is None or not self.process_pipeline.stages:
             return
+
+        self.result_generator.write_pipeline_yaml(self.process_pipeline.to_dict())
 
         self.result_generator.reset_las_file()
 
