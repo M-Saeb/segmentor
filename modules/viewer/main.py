@@ -170,10 +170,37 @@ class Viewer:
     def _run_full_processing(self):
         """
         Build the process pipeline from the current setup pipeline parameters
-        and run it over all chunks of the input file.
+        and run it over all chunks of the input file. Runs in a background
+        thread so the UI stays responsive and a waiting dialog is shown.
         """
-        self.controller.build_process_pipeline_from_setup()
-        self.controller.run_process_pipeline_on_all_chunks()
+        if self._window is None:
+            return
+
+        self._show_loading("Generated Output Folder, This may take a while ...")
+        app = gui.Application.instance
+        error_holder = [None]  # message string if failed, None if success
+
+        def _on_done():
+            try:
+                self._hide_loading()
+                if error_holder[0] is not None:
+                    self.show_message("Error", error_holder[0])
+                else:
+                    path = self.controller.result_generator.full_las_path
+                    self.show_message("Done", f"Output written to {path}")
+            except Exception:
+                log.exception("Error in full processing completion callback")
+
+        def _worker():
+            try:
+                self.controller.build_process_pipeline_from_setup()
+                self.controller.run_process_pipeline_on_all_chunks()
+            except Exception:
+                log.exception("Error while running full processing")
+                error_holder[0] = "Full processing failed. Check the log for details."
+            app.post_to_main_thread(self._window, _on_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def show_message(self, title, text):
 
