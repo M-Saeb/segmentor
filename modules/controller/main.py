@@ -4,6 +4,7 @@ import open3d as o3d
 from modules.utils.config import SegmentorConfig
 from modules.models.las_wrapper import LasWrapper
 from modules.models import pcd_tools
+from modules.models import ResultGenerator
 from modules.utils.log_utils import get_dual_logger
 from .pcd_previewer import PCDPreviewer
 
@@ -25,6 +26,7 @@ class Controller:
     def __init__(self, config: SegmentorConfig):
         self.config = config
         self.las_wrapper = LasWrapper(config)
+        self.result_generator = ResultGenerator(config)
         # Setup pipeline works on the current preview chunk
         self.setup_pipeline = self._create_setup_pipeline()
         # Will be populated later when building the full processing pipeline
@@ -240,11 +242,8 @@ class Controller:
         if self.process_pipeline is None or not self.process_pipeline.stages:
             return
 
-        # Initialize output file once if writing results.
-        if self.config.result.get("write_to_file"):
-            self.las_wrapper.initialize_output_file()
+        self.result_generator.reset_las_file()
 
-        destination_file_path = self.config.result["write_to_file"]
         for index, pcd, points_attributes in self.las_wrapper.iter_input_chunks():
             for stage in self.process_pipeline.stages:
                 stage_kwargs = dict(stage.params)
@@ -254,9 +253,8 @@ class Controller:
                     **stage_kwargs,
                 )
 
-            if destination_file_path:
-                self.las_wrapper.write_pcb_chunk_to_file(index, pcd, points_attributes)
-        log.info("===== Finished writing to: %s ======", destination_file_path)
+            self.result_generator.write_las_chunk_to_file(index, pcd, points_attributes)
+        log.info("===== Finished writing to: %s ======", self.result_generator.full_las_path)
 
     def _pipeline_functions_wrapper(self, callback, **kwargs):
         pcd, points_attributes = callback(

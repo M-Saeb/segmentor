@@ -20,4 +20,4 @@ wall_segmentation:
 
 result: # the resulted pointed cloud from the program
   display_result: false
-  write_to_file: "/mnt/e/Documents/Germany/FH Dortmund/5. Semster/Research Project/Code/file_grabber/result/office/office_test_7.las"
+  output_folder_path: "/home/mohammedalsalihi/LidarData/for_mohammed/fh_underground_result"

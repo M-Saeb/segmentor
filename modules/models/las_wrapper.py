@@ -148,31 +148,30 @@ class LasWrapper:
         for index, (pcd, points_attributes) in enumerate(self._read_input_file_in_chunks()):
             yield index, pcd, points_attributes
 
-    def initialize_output_file(self):
+    def initialize_output_file(self, full_path):
         """
         Create or truncate the output LAS file with a fresh header.
         Subsequent writes should use write_pcb_chunk_to_file in append mode.
         """
         with laspy.open(
-            self.config.result["write_to_file"],
+            full_path,
             mode="w",
             header=self._create_new_las_filer_header(),
         ) as writer:
             # Header is written on open; no points yet.
             pass
 
-    def write_pcb_chunk_to_file(self, index, pcd, points_attributes):
+    def write_pcb_chunk_to_file(self, index, pcd, points_attributes, full_path):
         """
         Write the Open3D point cloud and all original attributes to a new LAS file.
         Args:
             output_path: Path to save the new .las file
         """
-        output_file_path = self.config.result["write_to_file"]
         log.info("vvv Writing chunk %d vvv", index)
         points = np.asarray(pcd.points)
 
         new_las_header = self._create_new_las_filer_header()
-        with laspy.open(output_file_path, mode="a", header=new_las_header) as writer:
+        with laspy.open(full_path, mode="a", header=new_las_header) as writer:
             las_chunk = laspy.LasData(new_las_header)
             las_chunk.x = points[:, 0]
             las_chunk.y = points[:, 1]

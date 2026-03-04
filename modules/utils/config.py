@@ -29,7 +29,7 @@ class SegmentorConfig:
     }
     result = {
         "display_result": True,
-        "write_to_file": "./output.las"
+        "output_folder_path": "./result"
     }
 
     def __init__(self, config_file: str):

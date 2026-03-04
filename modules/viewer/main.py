@@ -104,12 +104,11 @@ class Viewer:
         Run only the current setup pipeline stage on the preview chunk and
         refresh the display, without advancing to the next stage.
         """
-        log.info("preview stage button clicked")
         if self._window is None:
             return
 
         # Show loading dialog immediately on the GUI thread.
-        self._show_loading("Running preview...")
+        self._show_loading("Loading...")
 
         app = gui.Application.instance
 
