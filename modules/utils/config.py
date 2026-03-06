@@ -23,6 +23,16 @@ class SegmentorConfig:
             "max_iter": 500
         }
     }
+    ceiling_segmentation: dict = {
+        "enable": False,
+        "epsilon": 0.01,
+        "min_support_points": 2000,
+        "max_tilt_from_horizontal_deg": 10.0,
+        "max_iterations": 1000,
+        "min_plane_size_ratio": 0.01,
+        "min_height_above_ground": 2.0,
+        "max_height_above_ground": 10.0,
+    }
     wall_segmentation: dict = {
         "enable": False,
         "filter_noise_after_segmenetation": True,
@@ -60,4 +70,12 @@ class SegmentorConfig:
         input_file = config_data.get("input_file", self.input_file)
         if not input_file:
             raise FileNotFoundError(f"LAS file not found: {input_file}")
-        
+
+        ceiling_cfg = config_data.get("ceiling_segmentation", self.ceiling_segmentation)
+        min_h = ceiling_cfg.get("min_height_above_ground", 2.0)
+        max_h = ceiling_cfg.get("max_height_above_ground", 10.0)
+        if min_h < 0 or max_h < 0 or min_h > max_h:
+            raise ValueError(
+                "Invalid ceiling_segmentation height configuration: "
+                f"min_height_above_ground={min_h}, max_height_above_ground={max_h}"
+            )

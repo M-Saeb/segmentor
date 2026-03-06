@@ -355,6 +355,200 @@ def apply_ransac_wall_detection(
 
     return points_attributes
 
+
+def apply_ransac_ceiling_detection(
+    points: np.ndarray,
+    points_attributes,
+    epsilon: float = 0.01,
+    min_support_points: int = 2000,
+    max_tilt_from_horizontal_deg: float = 10.0,
+    max_iterations: int = 1000,
+    min_plane_size_ratio: float = 0.01,
+    min_height_above_ground: float = 2.0,
+    max_height_above_ground: float = 10.0,
+    ground_height: float | None = None,
+):
+    """
+    Apply RANSAC plane detection for ceiling segmentation on a point cloud.
+
+    A ceiling is modeled as a (near) horizontal plane above the ground level.
+    Multiple ceiling planes can be detected (e.g., multi-floor garages).
+
+    Parameters
+    ----------
+    points : np.ndarray
+        3D numpy array of shape (N, 3) containing point cloud coordinates.
+    points_attributes : dict-like
+        Must contain a `classification` array-like with length N.
+    epsilon : float
+        Maximum distance from point to plane to be considered an inlier.
+    min_support_points : int
+        Minimum number of points required to form a valid plane.
+    max_tilt_from_horizontal_deg : float
+        Maximum allowed deviation from horizontal (Z-up) in degrees for ceiling classification.
+    max_iterations : int
+        Maximum number of RANSAC iterations per plane detection.
+    min_plane_size_ratio : float
+        Minimum ratio of remaining points to continue detection.
+    min_height_above_ground : float
+        Minimum allowed height above ground (in Z-units) for a ceiling plane.
+    max_height_above_ground : float
+        Maximum allowed height above ground (in Z-units) for a ceiling plane.
+    ground_height : float | None
+        Optional pre-computed ground reference height. If None, it will be
+        inferred from ground-classified points when available, otherwise from
+        the global minimum Z.
+    """
+
+    # input validation
+    if not isinstance(points, np.ndarray):
+        raise TypeError("points must be a numpy.ndarray of shape (N,3)")
+    if points.ndim != 2 or points.shape[1] < 3:
+        raise ValueError("points must have shape (N,3)")
+    if 'classification' not in points_attributes:
+        raise KeyError("points_attributes must contain 'classification'")
+
+    classification = np.asarray(points_attributes['classification'])
+    if classification.shape[0] != points.shape[0]:
+        raise ValueError("length of points_attributes['classification'] does not match number of points")
+
+    zs = points[:, 2]
+
+    # Pre-compute ground height information. When multiple ground levels exist
+    # (e.g. multi-floor garages), we later choose a local ground height per
+    # detected plane instead of a single global value.
+    ground_z_values = None
+    global_min_z = float(zs.min())
+    if ground_height is None:
+        ground_mask = classification == constants.PCB_CLASSIFICATION_GROUND
+        if np.any(ground_mask):
+            ground_z_values = zs[ground_mask].astype(float)
+            log.debug(
+                "Found %d ground-classified points for per-plane ground estimation.",
+                ground_z_values.size,
+            )
+        else:
+            log.debug(
+                "No ground-classified points found; falling back to global minimum Z "
+                "for per-plane ground estimation: %.3f",
+                global_min_z,
+            )
+
+    # Convert to Open3D point cloud
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+
+    detected_planes = []
+    plane_indices_list = []
+    ceiling_plane_ids = []
+
+    remaining_indices = np.arange(len(points))
+    remaining_pcd = pcd
+
+    plane_id = 0
+
+    log.info("Starting RANSAC ceiling detection on %d points...", len(points))
+
+    while len(remaining_indices) > len(points) * min_plane_size_ratio:
+        plane_model, inliers = remaining_pcd.segment_plane(
+            distance_threshold=epsilon,
+            ransac_n=3,
+            num_iterations=max_iterations,
+        )
+
+        if len(inliers) < min_support_points:
+            log.info(
+                "Ceiling detection stopping: Found only %d inliers (minimum: %d)",
+                len(inliers),
+                min_support_points,
+            )
+            break
+
+        a, b, c, d = plane_model
+        normal = np.array([a, b, c], dtype=float)
+        normal = normal / np.linalg.norm(normal)
+
+        # Horizontal planes have normals mostly aligned with Z axis
+        angle_from_horizontal = np.degrees(np.arccos(np.clip(np.abs(normal[2]), -1.0, 1.0)))
+
+        actual_indices = remaining_indices[inliers]
+        plane_z_values = zs[actual_indices]
+        mean_z = float(plane_z_values.mean())
+
+        # Choose a local ground height for this plane:
+        # - If an explicit ground_height is given, use it directly.
+        # - Otherwise, if we have ground_z_values, pick the highest ground
+        #   level not above the plane (or the closest overall if all are above).
+        # - As a final fallback, use the global minimum Z.
+        if ground_height is not None:
+            local_ground_height = float(ground_height)
+        elif ground_z_values is not None and ground_z_values.size > 0:
+            below_or_equal = ground_z_values[ground_z_values <= mean_z]
+            if below_or_equal.size > 0:
+                local_ground_height = float(below_or_equal.max())
+            else:
+                # All ground points are above the plane; choose the closest one.
+                idx_closest = np.argmin(np.abs(ground_z_values - mean_z))
+                local_ground_height = float(ground_z_values[idx_closest])
+        else:
+            local_ground_height = global_min_z
+
+        height_above_ground = mean_z - local_ground_height
+
+        is_ceiling = (
+            angle_from_horizontal <= max_tilt_from_horizontal_deg
+            and
+            min_height_above_ground <= height_above_ground <= max_height_above_ground
+        )
+
+        detected_planes.append(plane_model)
+        plane_indices_list.append(actual_indices)
+        if is_ceiling:
+            ceiling_plane_ids.append(plane_id)
+
+        log.debug(
+            "Plane %d: %d points, angle from horizontal: %.2f°, "
+            "mean_z: %.3f, height_above_ground: %.3f, is_ceiling: %s",
+            plane_id,
+            len(inliers),
+            angle_from_horizontal,
+            mean_z,
+            height_above_ground,
+            is_ceiling,
+        )
+
+        # Remove inliers from remaining points
+        remaining_indices = np.delete(remaining_indices, inliers)
+        if len(remaining_indices) == 0:
+            break
+
+        remaining_pcd = o3d.geometry.PointCloud()
+        remaining_pcd.points = o3d.utility.Vector3dVector(points[remaining_indices])
+
+        plane_id += 1
+
+    # Assign CEILING classification to points that belong to detected ceiling planes
+    assigned_count = 0
+    for pid in ceiling_plane_ids:
+        actual_indices = plane_indices_list[pid]
+        # only overwrite points that are still in INIT classification
+        mask_unclassified = classification[actual_indices] == constants.PCB_CLASSIFICATION_INIT
+        if np.any(mask_unclassified):
+            idx_to_set = actual_indices[mask_unclassified]
+            classification[idx_to_set] = constants.PCB_CLASSIFICATION_CEILING
+            assigned_count += idx_to_set.size
+
+    points_attributes['classification'] = classification
+
+    log.info(
+        "Ceiling RANSAC complete: %d planes found, %d ceilings detected, %d points labeled as CEILING",
+        len(detected_planes),
+        len(ceiling_plane_ids),
+        assigned_count,
+    )
+
+    return points_attributes
+
 def apply_wall_segmentation(
     pcd,
     points_attributes,
@@ -390,6 +584,51 @@ def apply_wall_segmentation(
         max_normal_dev=max_normal_dev,
         max_iterations=max_iterations,
         min_plane_size_ratio=min_plane_size_ratio,
+    )
+    return pcd, points_attributes
+
+
+def apply_ceiling_segmentation(
+    pcd,
+    points_attributes,
+    epsilon: float = 0.01,
+    min_support_points: int = 2000,
+    max_tilt_from_horizontal_deg: float = 10.0,
+    max_iterations: int = 1000,
+    min_plane_size_ratio: float = 0.01,
+    min_height_above_ground: float = 2.0,
+    max_height_above_ground: float = 10.0,
+):
+    """
+    Wrapper around apply_ransac_ceiling_detection that works directly with an
+    Open3D PointCloud, similar to how segment_ground and apply_wall_segmentation
+    operate.
+
+    Parameters
+    ----------
+    pcd : open3d.geometry.PointCloud
+        Point cloud to segment.
+    points_attributes : dict-like
+        Per-point attributes dictionary.
+    Other parameters are forwarded to apply_ransac_ceiling_detection.
+
+    Returns
+    -------
+    (pcd, points_attributes) : tuple
+        The original point cloud and updated attributes.
+    """
+    points = np.asarray(pcd.points)
+    points_attributes = apply_ransac_ceiling_detection(
+        points,
+        points_attributes,
+        epsilon=epsilon,
+        min_support_points=min_support_points,
+        max_tilt_from_horizontal_deg=max_tilt_from_horizontal_deg,
+        max_iterations=max_iterations,
+        min_plane_size_ratio=min_plane_size_ratio,
+        min_height_above_ground=min_height_above_ground,
+        max_height_above_ground=max_height_above_ground,
+        ground_height=None,
     )
     return pcd, points_attributes
 

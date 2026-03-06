@@ -54,6 +54,10 @@ class Controller:
         if ground_cfg.get("enable", False):
             new_pipeline.stages.append(self._make_ground_segmentation_stage())
 
+        ceiling_cfg = getattr(self.config, "ceiling_segmentation", {})
+        if ceiling_cfg.get("enable", False):
+            new_pipeline.stages.append(self._make_ceiling_segmentation_stage())
+
         wall_cfg = getattr(self.config, "wall_segmentation", {})
         if wall_cfg.get("enable", False):
             new_pipeline.stages.append(self._make_wall_segmentation_stage())
@@ -101,6 +105,27 @@ class Controller:
             name="Ground Segmentation",
             func=lambda **kwargs: self._pipeline_functions_wrapper(
                 pcd_tools.segment_ground,
+                **kwargs,
+            ),
+            params=params,
+        )
+
+    def _make_ceiling_segmentation_stage(self) -> PipelineStage:
+        ceiling_cfg = getattr(self.config, "ceiling_segmentation", {})
+        params: Dict[str, object] = {
+            "epsilon": ceiling_cfg.get("epsilon", 0.01),
+            "min_support_points": ceiling_cfg.get("min_support_points", 2000),
+            "max_tilt_from_horizontal_deg": ceiling_cfg.get("max_tilt_from_horizontal_deg", 10.0),
+            "max_iterations": ceiling_cfg.get("max_iterations", 1000),
+            "min_plane_size_ratio": ceiling_cfg.get("min_plane_size_ratio", 0.01),
+            "min_height_above_ground": ceiling_cfg.get("min_height_above_ground", 2.0),
+            "max_height_above_ground": ceiling_cfg.get("max_height_above_ground", 10.0),
+        }
+
+        return PipelineStage(
+            name="Ceiling Segmentation",
+            func=lambda **kwargs: self._pipeline_functions_wrapper(
+                pcd_tools.apply_ceiling_segmentation,
                 **kwargs,
             ),
             params=params,
@@ -205,6 +230,8 @@ class Controller:
             func = self._process_filter_noise_stage
         elif name == "Ground Segmentation":
             func = self._process_ground_segmentation_stage
+        elif name == "Ceiling Segmentation":
+            func = self._process_ceiling_segmentation_stage
         elif name == "Wall Segmentation":
             func = self._process_wall_segmentation_stage
         elif name == "Post-wall Noise Filter":
@@ -222,6 +249,13 @@ class Controller:
 
     def _process_ground_segmentation_stage(self, pcd, points_attributes, **kwargs):
         return pcd_tools.segment_ground(
+            pcd,
+            points_attributes,
+            **kwargs
+        )
+
+    def _process_ceiling_segmentation_stage(self, pcd, points_attributes, **kwargs):
+        return pcd_tools.apply_ceiling_segmentation(
             pcd,
             points_attributes,
             **kwargs
