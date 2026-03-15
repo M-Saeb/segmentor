@@ -2,8 +2,8 @@ from open3d.visualization import gui, rendering
 import threading
 from modules.utils.config import SegmentorConfig
 from modules.utils.log_utils import get_dual_logger
-from modules.controller import  Controller
-from .input_layout import InputLayout
+from modules.controller import Controller
+from .input_layout import create_input_layout_for_stage
 
 log = get_dual_logger(__name__)
 
@@ -15,7 +15,11 @@ class Viewer:
         self._window = None
         self._layout = None  # left control panel (container)
         self._main_layout = None  # section for main buttons
-        self._input_layout = None
+        self._input_layout = None  # current per-stage layout (recreated when stage changes)
+        self._stage_buttons_container = None  # Vert for Run / Confirm buttons
+        self._params_proxy = None  # WidgetProxy to swap in current stage's param panel
+        self.run_btn = None
+        self.confirm_btn = None
         self._preview_scene = None
         self._loading_dialog = None
         self._camera_initialized = False
@@ -30,8 +34,6 @@ class Viewer:
         self._window = app.create_window("Point Cloud GUI", 1600, 900)
 
         em = self._window.theme.font_size
-
-        self._input_layout = InputLayout(em)
 
         # Vertical layout for controls (left panel)
         layout = gui.Vert(0.5 * em, gui.Margins(em, em, em, em))
@@ -53,6 +55,14 @@ class Viewer:
         )
         self._main_layout.add_child(classifactions_colors_button)
 
+        self.run_btn = gui.Button(f"Run Stage")
+        self.run_btn.horizontal_padding_em = 1.0
+        self._main_layout.add_child(self.run_btn)
+
+        self.confirm_btn = gui.Button(f"Confirm Stage")
+        self.confirm_btn.horizontal_padding_em = 1.0
+        self._main_layout.add_child(self.confirm_btn)
+
         finalize_button = gui.Button("Finalize & Run Full Processing")
         finalize_button.horizontal_padding_em = 1.0
         finalize_button.set_on_clicked(
@@ -60,13 +70,12 @@ class Viewer:
         )
         self._main_layout.add_child(finalize_button)
 
+
         self._layout.add_child(gui.Label("General"))
         self._layout.add_child(self._main_layout)
 
-        # --- Custom buttons section ---
-        self._layout.add_child(gui.Label("Custom buttons"))
-        self._layout.add_child(self._input_layout.o3d_gui)
-
+        self._params_proxy = gui.WidgetProxy()
+        self._layout.add_child(self._params_proxy)
 
         # Create a SceneWidget to display the point cloud inside the same window
         self._preview_scene = gui.SceneWidget()
@@ -150,22 +159,19 @@ class Viewer:
         self.switch_to_next_stage_for_setup_pipeline(advance=False)
 
     def switch_to_next_stage_for_setup_pipeline(self, advance: bool = True):
-        self._input_layout.reset_all_custom_btns()
         if advance:
             self.controller.switch_to_next_setup_pipeline_stage()
         stage = self.controller.get_current_setup_pipeline_stage()
         if stage is None:
             return
-        # Reconfigure parameter controls for the newly selected stage.
-        self._input_layout.configure_for_stage(stage)
-        self._input_layout.set_custom_btn(
-            title=f"Run {stage.name}",
-            callback=self._stage_preview_btn_wrapper,
-        )
-        self._input_layout.set_custom_btn(
-            title=f"Confirm {stage.name}",
-            callback=self._stage_confirm_btn_wrapper,
-        )
+        em = self._window.theme.font_size
+        self._input_layout = create_input_layout_for_stage(em, stage.name)
+        self._input_layout.configure(stage)
+        self._params_proxy.set_widget(self._input_layout.o3d_gui)
+        self.run_btn.set_on_clicked(self._stage_preview_btn_wrapper)
+        self.run_btn.text = f"Run {stage.name}"
+        self.confirm_btn.set_on_clicked(self._stage_confirm_btn_wrapper)
+        self.confirm_btn.text = f"Confirm {stage.name}"
 
     def _run_full_processing(self):
         """

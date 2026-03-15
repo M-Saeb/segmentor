@@ -458,7 +458,7 @@ def apply_ransac_ceiling_detection(
 
         if len(inliers) < min_support_points:
             log.info(
-                "Ceiling detection stopping: Found only %d inliers (minimum: %d)",
+                "Stopping ceiling detection: Found only %d inliers (minimum: %d)",
                 len(inliers),
                 min_support_points,
             )
