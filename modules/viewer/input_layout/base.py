@@ -79,9 +79,6 @@ class InputLayout(ABC):
         if not hasattr(stage, "params"):
             return
 
-        # Clear existing parameter widgets before rebuilding.
-        self.o3d_gui.clear_children()
-
         keys = key_order if key_order is not None else list(param_config.keys())
         for key in keys:
             if key not in stage.params or key not in param_config:
@@ -103,7 +100,6 @@ class DefaultInputLayout(InputLayout):
         pass
 
     def configure(self, stage: SupportsPipelineStage) -> None:
-        self.o3d_gui.clear_children()
         if not hasattr(stage, "params"):
             return
         for key, value in stage.params.items():
