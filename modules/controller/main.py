@@ -2,6 +2,7 @@ import dataclasses
 from typing import Callable, Dict, List
 import open3d as o3d
 from modules.utils.config import SegmentorConfig
+from modules.shared.pipeline_types import PipelineStageInfo
 from modules.models.las_wrapper import LasWrapper
 from modules.models.result_generator import ResultGenerator
 from modules.models import pcd_tools
@@ -43,7 +44,13 @@ class Controller:
 
     def _create_setup_pipeline(self) -> Pipeline:
         """
-        Build the interactive (setup) pipeline used by the GUI on a preview chunk.
+        Build the interactive ("setup") pipeline used by the GUI on a preview
+        chunk.
+
+        The setup pipeline operates on a single preview chunk, allowing the user
+        to tune parameters stage-by-stage (noise filter, ground/ceiling/wall
+        segmentation, etc.). Its structure is later cloned into a "process"
+        pipeline that is applied to every chunk of the input file.
         """
         new_pipeline = Pipeline(kind="setup")
 
@@ -208,8 +215,13 @@ class Controller:
     # ---- Process pipeline helpers ----
     def build_process_pipeline_from_setup(self) -> Pipeline:
         """
-        Clone the current setup pipeline into a process pipeline that operates
-        on arbitrary chunks (pcd, points_attributes) instead of the preview chunk.
+        Clone the current setup pipeline into a "process" pipeline that
+        operates on arbitrary chunks (pcd, points_attributes) instead of only
+        the preview chunk.
+
+        Each setup stage is mapped to a processing-stage callable with its
+        parameters frozen at their current values, so that the full input file
+        can be processed consistently with the configuration chosen in the GUI.
         """
         process_pipeline = Pipeline(kind="process")
 
@@ -222,6 +234,11 @@ class Controller:
     def _make_process_stage(self, setup_stage: PipelineStage) -> PipelineStage:
         """
         Map a setup stage to its processing equivalent while freezing parameters.
+
+        The mapping is based on the human-readable stage `name` used in the
+        setup pipeline; known names (e.g. "Filter Noise", "Ground Segmentation")
+        are translated into dedicated processing helpers, while unknown names
+        fall back to using the original callable directly.
         """
         name = setup_stage.name
         params = dict(setup_stage.params)
@@ -278,6 +295,11 @@ class Controller:
     def run_process_pipeline_on_all_chunks(self):
         """
         Execute the finalized process pipeline on every input chunk.
+
+        This iterates over all LAS chunks, applies each process-stage function
+        in order, and writes the resulting classified points out via
+        `ResultGenerator`. A YAML description of the pipeline is written once
+        before processing begins.
         """
         if self.process_pipeline is None:
             self.build_process_pipeline_from_setup()
@@ -319,7 +341,3 @@ class Controller:
         elif color == "Classification":
             previewer.apply_classfication_colors()
         return previewer.pcd
-
-
-if __name__ == "__main__":
-    con = Controller()

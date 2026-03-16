@@ -159,19 +159,27 @@ class Viewer:
         self.switch_to_next_stage_for_setup_pipeline(advance=False)
 
     def switch_to_next_stage_for_setup_pipeline(self, advance: bool = True):
+        """
+        Move to the next setup pipeline stage (optionally) and reconfigure the
+        UI to show its parameters and actions.
+
+        When `advance` is True, the controller also snapshots the current
+        preview chunk so that repeated previews for the new stage always start
+        from the same input.
+        """
         if advance:
             self.controller.switch_to_next_setup_pipeline_stage()
-        stage = self.controller.get_current_setup_pipeline_stage()
-        if stage is None:
+        stage_info = self.controller.get_current_setup_pipeline_stage()
+        if stage_info is None:
             return
         em = self._window.theme.font_size
-        self._input_layout = create_input_layout_for_stage(em, stage.name)
-        self._input_layout.configure(stage)
+        self._input_layout = create_input_layout_for_stage(em, stage_info.name)
+        self._input_layout.configure(stage_info)  # type: ignore[arg-type]
         self._params_proxy.set_widget(self._input_layout.o3d_gui)
         self.run_btn.set_on_clicked(self._stage_preview_btn_wrapper)
-        self.run_btn.text = f"Run {stage.name}"
+        self.run_btn.text = f"Run {stage_info.name}"
         self.confirm_btn.set_on_clicked(self._stage_confirm_btn_wrapper)
-        self.confirm_btn.text = f"Confirm {stage.name}"
+        self.confirm_btn.text = f"Confirm {stage_info.name}"
 
     def _run_full_processing(self):
         """

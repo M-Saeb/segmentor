@@ -3,7 +3,14 @@ import os
 
 
 class SegmentorConfig:
-    """Load configuration from a YAML file and expose as attributes."""
+    """
+    Load configuration from a YAML file and expose it as attributes.
+
+    Class attributes in this type act as defaults and are overridden by values
+    loaded from `config.yml` (or another provided config file). Downstream
+    components should therefore always rely on this object rather than reading
+    the YAML directly.
+    """
 
     # Pre-defined default parameters
     input_file: str = "./input.las"

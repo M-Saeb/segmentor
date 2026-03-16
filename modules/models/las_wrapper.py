@@ -10,10 +10,15 @@ class LasWrapper:
 
     def __init__(self, config: config.SegmentorConfig, auto_read_input_file: bool = True):
         """
-        Wrapper to read LAS files either in chunks or bulk.
+        High-level wrapper around LAS I/O and chunk iteration.
+
         Args:
-            config_file_path: Path to the configuration YAML file
-            chunk_size: Number of points to read per chunk (default 5 million)
+            config: Parsed `SegmentorConfig` holding input path, chunk size, and
+                behavior flags such as `reset_classification`.
+            auto_read_input_file: When True, immediately creates an iterator
+                over input chunks and loads the first chunk into
+                `self.current_chunk`. When False, the caller is responsible for
+                driving `iter_input_chunks()` manually.
         """
         self.config = config
         if auto_read_input_file:

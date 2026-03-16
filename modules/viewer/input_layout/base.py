@@ -3,7 +3,7 @@ from typing import Any, Dict
 
 from open3d.visualization import gui
 
-from modules.controller.main import PipelineStage
+from modules.shared.pipeline_types import SupportsPipelineStage
 from modules.utils.log_utils import get_dual_logger
 
 log = get_dual_logger(__name__)
@@ -18,10 +18,8 @@ class InputLayout(ABC):
 
     def __init__(self, em: float):
         self._em = em
+        # Single vertical container that directly holds all parameter rows.
         self.o3d_gui = gui.Vert(0.25 * em, gui.Margins(0, 0, 0, 0))
-        # Container for parameter controls of the currently selected stage.
-        self._params_container = gui.Vert(0.25 * em, gui.Margins(0, 0, 0, 0))
-        self.o3d_gui.add_child(self._params_container)
         self.create_layout()
 
     @abstractmethod
@@ -30,7 +28,7 @@ class InputLayout(ABC):
         pass
 
     @abstractmethod
-    def configure(self, stage: PipelineStage) -> None:
+    def configure(self, stage: SupportsPipelineStage) -> None:
         """
         Build the parameter panel for the given pipeline stage. Subclasses
         should clear _params_container and add rows for each visible param.
@@ -43,7 +41,7 @@ class InputLayout(ABC):
         param_key: str,
         display_label: str,
         value: int | float,
-        stage: PipelineStage,
+        stage: SupportsPipelineStage,
     ) -> None:
         """Add a single labeled numeric field that updates stage.params[param_key]."""
         original_type = int if isinstance(value, int) else float
@@ -68,18 +66,21 @@ class InputLayout(ABC):
 
     def _build_params_from_config(
         self,
-        stage: PipelineStage,
+        stage: SupportsPipelineStage,
         param_config: Dict[str, Dict[str, Any]],
         key_order: list[str] | None = None,
     ) -> None:
         """
-        Clear _params_container and add rows for each param in stage.params
+        Clear the parameter panel and add rows for each param in stage.params
         that is present in param_config with visible=True. Uses display labels
         from param_config. key_order defines the display order; if None, uses
         param_config key order.
         """
         if not hasattr(stage, "params"):
             return
+
+        # Clear existing parameter widgets before rebuilding.
+        self.o3d_gui.clear_children()
 
         keys = key_order if key_order is not None else list(param_config.keys())
         for key in keys:
@@ -92,9 +93,7 @@ class InputLayout(ABC):
             if not isinstance(value, (int, float)):
                 continue
             label = meta.get("label", key)
-            self._add_numeric_param_row(
-                self._params_container, key, label, value, stage
-            )
+            self._add_numeric_param_row(self.o3d_gui, key, label, value, stage)
 
 
 class DefaultInputLayout(InputLayout):
@@ -103,13 +102,11 @@ class DefaultInputLayout(InputLayout):
     def create_layout(self) -> None:
         pass
 
-    def configure(self, stage: PipelineStage) -> None:
-        self._params_container.clear_children()
+    def configure(self, stage: SupportsPipelineStage) -> None:
+        self.o3d_gui.clear_children()
         if not hasattr(stage, "params"):
             return
         for key, value in stage.params.items():
             if not isinstance(value, (int, float)):
                 continue
-            self._add_numeric_param_row(
-                self._params_container, key, str(key), value, stage
-            )
+            self._add_numeric_param_row(self.o3d_gui, key, str(key), value, stage)

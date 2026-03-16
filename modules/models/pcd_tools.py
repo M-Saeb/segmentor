@@ -639,7 +639,6 @@ def filter_noise_for_none_classified_points(pcd, points_attributes, nb_neighbors
     initial (unclassified) state, keeping all classified points untouched.
 
     Args:
-        index: Chunk index (for logging only).
         pcd: Open3D point cloud to filter.
         points_attributes: Dictionary of point attributes.
         nb_neighbors: Number of neighbors for statistical outlier removal.
