@@ -1,5 +1,6 @@
 from open3d.visualization import gui, rendering
 import threading
+import os
 from modules.utils.config import SegmentorConfig
 from modules.utils.log_utils import get_dual_logger
 from modules.controller import Controller
@@ -18,11 +19,13 @@ class Viewer:
         self._input_layout = None  # current per-stage layout (recreated when stage changes)
         self._stage_buttons_container = None  # Vert for Run / Confirm buttons
         self._params_proxy = None  # WidgetProxy to swap in current stage's param panel
-        self.run_btn = None
-        self.confirm_btn = None
+        self.run_stage_btn = None
+        self.confirm_stage_btn = None
+        self.skip_stage_btn = None
         self._preview_scene = None
         self._loading_dialog = None
         self._camera_initialized = False
+        self._exit_after_message = False # Flag to exit the application after a success message is shown
 
 
     def create_gui(self):
@@ -55,13 +58,18 @@ class Viewer:
         )
         self._main_layout.add_child(classifactions_colors_button)
 
-        self.run_btn = gui.Button(f"Run Stage")
-        self.run_btn.horizontal_padding_em = 1.0
-        self._main_layout.add_child(self.run_btn)
+        self.run_stage_btn = gui.Button(f"Run Stage")
+        self.run_stage_btn.horizontal_padding_em = 1.0
+        self._main_layout.add_child(self.run_stage_btn)
 
-        self.confirm_btn = gui.Button(f"Confirm Stage")
-        self.confirm_btn.horizontal_padding_em = 1.0
-        self._main_layout.add_child(self.confirm_btn)
+        self.confirm_stage_btn = gui.Button(f"Confirm Stage")
+        self.confirm_stage_btn.horizontal_padding_em = 1.0
+        self._main_layout.add_child(self.confirm_stage_btn)
+
+        self.skip_stage_btn = gui.Button(f"Skip Stage")
+        self.skip_stage_btn.horizontal_padding_em = 1.0
+        self.skip_stage_btn.set_on_clicked(self._stage_skip_btn_wrapper)
+        self._main_layout.add_child(self.skip_stage_btn)
 
         finalize_button = gui.Button("Finalize & Run Full Processing")
         finalize_button.horizontal_padding_em = 1.0
@@ -151,9 +159,7 @@ class Viewer:
 
         # Mark the current stage as enabled before advancing so that only
         # confirmed stages are later included in the process pipeline.
-        current_stage = self.controller.get_current_setup_pipeline_stage()
-        if current_stage is not None:
-            current_stage.enabled = True
+        self.controller.set_flag_for_current_setup_stage(True)
 
         try:
             next_stage = self.controller.confirm_current_stage_and_advance()
@@ -164,6 +170,22 @@ class Viewer:
         # Clear existing buttons and, if there is a next stage, configure UI
         # for it without advancing again.
         self.switch_to_next_stage_for_setup_pipeline(advance=False)
+
+    def _stage_skip_btn_wrapper(self):
+        """
+        Skip the current stage without enabling it, then advance to the next
+        stage and reconfigure the UI.
+        """
+        log.info("skip stage button clicked")
+        if self._window is None:
+            return
+
+        # Explicitly mark the current stage as disabled to ensure it is not
+        # included in the later process pipeline.
+        self.controller.set_flag_for_current_setup_stage(False)
+
+        # Advance to the next setup pipeline stage without confirming results
+        self.switch_to_next_stage_for_setup_pipeline(advance=True)
 
     def switch_to_next_stage_for_setup_pipeline(self, advance: bool = True):
         """
@@ -183,10 +205,11 @@ class Viewer:
         self._input_layout = create_input_layout_for_stage(em, stage_info.name)
         self._input_layout.configure(stage_info)  # type: ignore[arg-type]
         self._params_proxy.set_widget(self._input_layout.o3d_gui)
-        self.run_btn.set_on_clicked(self._stage_preview_btn_wrapper)
-        self.run_btn.text = f"Run {stage_info.name}"
-        self.confirm_btn.set_on_clicked(self._stage_confirm_btn_wrapper)
-        self.confirm_btn.text = f"Confirm {stage_info.name}"
+        self.run_stage_btn.set_on_clicked(self._stage_preview_btn_wrapper)
+        self.run_stage_btn.text = f"Run {stage_info.name}"
+        self.confirm_stage_btn.set_on_clicked(self._stage_confirm_btn_wrapper)
+        self.confirm_stage_btn.text = f"Confirm {stage_info.name}"
+        self.skip_stage_btn.text = f"Skip {stage_info.name}"
 
     def _run_full_processing(self):
         """
@@ -208,6 +231,8 @@ class Viewer:
                     self.show_message("Error", error_holder[0])
                 else:
                     path = self.controller.result_generator.full_las_path
+                    # After the user acknowledges the success dialog, exit the GUI.
+                    self._exit_after_message = True
                     self.show_message("Done", f"Output written to {path}")
             except Exception:
                 log.exception("Error in full processing completion callback")
@@ -225,7 +250,6 @@ class Viewer:
 
     def show_message(self, title, text):
 
-        log.info("_show_message() hit")
         if self._window is None:
             return
 
@@ -238,7 +262,19 @@ class Viewer:
         ok_btn = gui.Button("OK")
 
         def _close():
+            # Close the dialog first.
             self._window.close_dialog()
+            # If a full-processing success dialog requested exit, close the
+            # main window and terminate the process so that the launching
+            # terminal also exits.
+            if self._exit_after_message:
+                self._exit_after_message = False
+                try:
+                    self._window.close()
+                    app = gui.Application.instance
+                    app.quit()
+                finally:
+                    os._exit(0)
 
         ok_btn.set_on_clicked(_close)
         layout.add_child(ok_btn)
@@ -264,7 +300,6 @@ class Viewer:
 
         self._loading_dialog = dlg
         self._window.show_dialog(dlg)
-        log.info("_show_loading() hit: %s", text)
 
     def _hide_loading(self):
         """

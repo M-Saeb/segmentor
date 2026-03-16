@@ -168,6 +168,13 @@ class Controller:
             return None
         return self.setup_pipeline.stages[self.setup_pipeline.current_stage_index]
 
+    def set_flag_for_current_setup_stage(self, flag: bool):
+        current_stage = self.get_current_setup_pipeline_stage()
+        if current_stage is None:
+            return
+        current_stage.enabled = flag
+        log.info(f"Set flag for stage {current_stage.name} to {flag}")
+
     def run_current_stage_of_setup_pipeline(self, **kwargs):
         current_stage = self.get_current_setup_pipeline_stage()
         if current_stage is None:
