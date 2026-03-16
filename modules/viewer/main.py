@@ -16,6 +16,8 @@ class Viewer:
         self._window = None
         self._layout = None  # left control panel (container)
         self._main_layout = None  # section for main buttons
+        self._stage_header_layout = None  # header for current stage info
+        self._stage_header_label = None  # label showing current stage name
         self._input_layout = None  # current per-stage layout (recreated when stage changes)
         self._stage_buttons_container = None  # Vert for Run / Confirm buttons
         self._params_proxy = None  # WidgetProxy to swap in current stage's param panel
@@ -81,6 +83,13 @@ class Viewer:
 
         self._layout.add_child(gui.Label("General"))
         self._layout.add_child(self._main_layout)
+
+        # Stage header layout and label
+        self._stage_header_layout = gui.Vert(0.1 * em, gui.Margins(0, 0, 0, 0))
+        self._stage_header_label = gui.Label("–")
+        self._stage_header_layout.add_child(self._stage_header_label)
+        self._layout.add_child(self._stage_header_layout)
+
 
         self._params_proxy = gui.WidgetProxy()
         self._layout.add_child(gui.Label("Parameters"))
@@ -205,6 +214,11 @@ class Viewer:
         self._input_layout = create_input_layout_for_stage(em, stage_info.name)
         self._input_layout.configure(stage_info)  # type: ignore[arg-type]
         self._params_proxy.set_widget(self._input_layout.o3d_gui)
+        # Make the stage change visually obvious:
+        # - Update a prominent label with the stage name
+        # - Update button texts to include the stage name
+        if self._stage_header_label is not None:
+            self._stage_header_label.text = "Current Stage: " + stage_info.name
         self.run_stage_btn.set_on_clicked(self._stage_preview_btn_wrapper)
         self.run_stage_btn.text = f"Run {stage_info.name}"
         self.confirm_stage_btn.set_on_clicked(self._stage_confirm_btn_wrapper)
