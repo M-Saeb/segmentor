@@ -1,8 +1,6 @@
-import dataclasses
-from typing import Callable, Dict, List
-import open3d as o3d
+from typing import Dict
 from modules.utils.config import SegmentorConfig
-from modules.shared.pipeline_types import PipelineStageInfo
+from modules.shared.pipeline import PipelineStage, Pipeline
 from modules.models.las_wrapper import LasWrapper
 from modules.models.result_generator import ResultGenerator
 from modules.models import pcd_tools
@@ -11,26 +9,6 @@ from .pcd_previewer import PCDPreviewer
 
 log = get_dual_logger(__name__)
 
-@dataclasses.dataclass
-class PipelineStage:
-    name: str
-    func: Callable
-    params: Dict[str, object] = dataclasses.field(default_factory=dict)
-
-@dataclasses.dataclass
-class Pipeline:
-    stages: List[PipelineStage] = dataclasses.field(default_factory=list)
-    current_stage_index: int = -1  # starting from -1 to handle iteration
-    kind: str = "setup"
-
-    def to_dict(self):
-        return {
-            "kind": self.kind,
-            "stages": [
-                {"name": stage.name, "params": dict(stage.params)}
-                for stage in self.stages
-            ],
-        }
 
 class Controller:
     def __init__(self, config: SegmentorConfig):
@@ -226,6 +204,9 @@ class Controller:
         process_pipeline = Pipeline(kind="process")
 
         for setup_stage in self.setup_pipeline.stages:
+            # Only include stages that have been explicitly enabled.
+            if not getattr(setup_stage, "enabled", False):
+                continue
             process_pipeline.stages.append(self._make_process_stage(setup_stage))
 
         self.process_pipeline = process_pipeline
@@ -259,7 +240,7 @@ class Controller:
             log.warning(f"Falling back: no process stage for {name} with params {params}")
             func = setup_stage.func
 
-        return PipelineStage(name=name, func=func, params=params)
+        return PipelineStage(name=name, func=func, params=params, enabled=True)
 
     def _process_filter_noise_stage(self, pcd, points_attributes, **kwargs):
         return pcd_tools.filter_noise(pcd, points_attributes, **kwargs)

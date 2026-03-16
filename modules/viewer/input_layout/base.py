@@ -3,7 +3,7 @@ from typing import Any, Dict
 
 from open3d.visualization import gui
 
-from modules.shared.pipeline_types import SupportsPipelineStage
+from modules.shared.pipeline import PipelineStage
 from modules.utils.log_utils import get_dual_logger
 
 log = get_dual_logger(__name__)
@@ -28,7 +28,7 @@ class InputLayout(ABC):
         pass
 
     @abstractmethod
-    def configure(self, stage: SupportsPipelineStage) -> None:
+    def configure(self, stage: PipelineStage) -> None:
         """
         Build the parameter panel for the given pipeline stage. Subclasses
         should clear _params_container and add rows for each visible param.
@@ -41,7 +41,7 @@ class InputLayout(ABC):
         param_key: str,
         display_label: str,
         value: int | float,
-        stage: SupportsPipelineStage,
+        stage: PipelineStage,
     ) -> None:
         """Add a single labeled numeric field that updates stage.params[param_key]."""
         original_type = int if isinstance(value, int) else float
@@ -66,7 +66,7 @@ class InputLayout(ABC):
 
     def _build_params_from_config(
         self,
-        stage: SupportsPipelineStage,
+        stage: PipelineStage,
         param_config: Dict[str, Dict[str, Any]],
         key_order: list[str] | None = None,
     ) -> None:
@@ -99,7 +99,7 @@ class DefaultInputLayout(InputLayout):
     def create_layout(self) -> None:
         pass
 
-    def configure(self, stage: SupportsPipelineStage) -> None:
+    def configure(self, stage: PipelineStage) -> None:
         if not hasattr(stage, "params"):
             return
         for key, value in stage.params.items():

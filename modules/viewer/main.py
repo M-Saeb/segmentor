@@ -75,6 +75,7 @@ class Viewer:
         self._layout.add_child(self._main_layout)
 
         self._params_proxy = gui.WidgetProxy()
+        self._layout.add_child(gui.Label("Parameters"))
         self._layout.add_child(self._params_proxy)
 
         # Create a SceneWidget to display the point cloud inside the same window
@@ -147,6 +148,12 @@ class Viewer:
         log.info("confirm stage button clicked")
         if self._window is None:
             return
+
+        # Mark the current stage as enabled before advancing so that only
+        # confirmed stages are later included in the process pipeline.
+        current_stage = self.controller.get_current_setup_pipeline_stage()
+        if current_stage is not None:
+            current_stage.enabled = True
 
         try:
             next_stage = self.controller.confirm_current_stage_and_advance()
