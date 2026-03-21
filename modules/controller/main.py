@@ -168,6 +168,19 @@ class Controller:
             return None
         return self.setup_pipeline.stages[self.setup_pipeline.current_stage_index]
 
+    def iterate_preview_chunk(self, delta: int) -> bool:
+        """
+        Move the preview to another input chunk (forward or backward).
+
+        On success, clears the stage snapshot and resets the setup pipeline to
+        the first stage, since preview state is tied to the current chunk.
+        """
+        if not self.las_wrapper.iterate_chunk(delta):
+            return False
+        self.las_wrapper.delete_snapshot()
+        self.setup_pipeline.current_stage_index = 0
+        return True
+
     def set_flag_for_current_setup_stage(self, flag: bool):
         current_stage = self.get_current_setup_pipeline_stage()
         if current_stage is None:

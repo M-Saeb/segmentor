@@ -16,6 +16,8 @@ class Viewer:
         self._window = None
         self._layout = None  # left control panel (container)
         self._main_layout = None  # section for main buttons
+        self._chunk_header_layout = None  # header for current input chunk index
+        self._chunk_header_label = None  # label showing current chunk position
         self._stage_header_layout = None  # header for current stage info
         self._stage_header_label = None  # label showing current stage name
         self._input_layout = None  # current per-stage layout (recreated when stage changes)
@@ -29,6 +31,55 @@ class Viewer:
         self._camera_initialized = False
         self._exit_after_message = False # Flag to exit the application after a success message is shown
 
+    def _update_chunk_header_label(self):
+        if self._chunk_header_label is None:
+            return
+        lw = self.controller.las_wrapper
+        total = getattr(lw, "_total_chunks", None)
+        if total is None:
+            self._chunk_header_label.text = "–"
+        elif total <= 0:
+            self._chunk_header_label.text = "Current chunk: –"
+        else:
+            idx = getattr(lw, "_chunk_index", 0)
+            self._chunk_header_label.text = f"Current chunk: {idx + 1} / {total}"
+
+    def _on_chunk_navigate_clicked(self, delta: int):
+        if self._window is None:
+            return
+
+        self._show_loading("Loading chunk...")
+
+        app = gui.Application.instance
+
+        def _worker():
+            try:
+                ok = self.controller.iterate_preview_chunk(delta)
+            except Exception:
+                log.exception("Error while switching chunk")
+                ok = False
+
+            def _on_done():
+                try:
+                    self._hide_loading()
+                    if not ok:
+                        msg = (
+                            "No previous chunk."
+                            if delta < 0
+                            else "No next chunk."
+                        )
+                        self.show_message("Chunk", msg)
+                        return
+                    self._camera_initialized = False
+                    self.switch_to_next_stage_for_setup_pipeline(advance=False)
+                    self._update_chunk_header_label()
+                    self.update_preview_pcd()
+                except Exception:
+                    log.exception("Error in chunk navigation completion")
+
+            app.post_to_main_thread(self._window, _on_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def create_gui(self):
 
@@ -60,6 +111,16 @@ class Viewer:
         )
         self._main_layout.add_child(classifactions_colors_button)
 
+        prev_chunk_btn = gui.Button("Previous Chunk")
+        prev_chunk_btn.horizontal_padding_em = 1.0
+        prev_chunk_btn.set_on_clicked(lambda: self._on_chunk_navigate_clicked(-1))
+        self._main_layout.add_child(prev_chunk_btn)
+
+        next_chunk_btn = gui.Button("Next Chunk")
+        next_chunk_btn.horizontal_padding_em = 1.0
+        next_chunk_btn.set_on_clicked(lambda: self._on_chunk_navigate_clicked(1))
+        self._main_layout.add_child(next_chunk_btn)
+
         self.run_stage_btn = gui.Button(f"Run Stage")
         self.run_stage_btn.horizontal_padding_em = 1.0
         self._main_layout.add_child(self.run_stage_btn)
@@ -83,6 +144,12 @@ class Viewer:
 
         self._layout.add_child(gui.Label("General"))
         self._layout.add_child(self._main_layout)
+
+        # Chunk position (above current stage)
+        self._chunk_header_layout = gui.Vert(0.1 * em, gui.Margins(0, 0, 0, 0))
+        self._chunk_header_label = gui.Label("–")
+        self._chunk_header_layout.add_child(self._chunk_header_label)
+        self._layout.add_child(self._chunk_header_layout)
 
         # Stage header layout and label
         self._stage_header_layout = gui.Vert(0.1 * em, gui.Margins(0, 0, 0, 0))
@@ -123,6 +190,7 @@ class Viewer:
         self.update_preview_pcd()
 
         self.switch_to_next_stage_for_setup_pipeline()
+        self._update_chunk_header_label()
 
         app.run()
 

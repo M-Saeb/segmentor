@@ -22,11 +22,51 @@ class LasWrapper:
         """
         self.config = config
         if auto_read_input_file:
-            self.chunks_iter = iter(self._read_input_file_in_chunks())
-            self.current_chunk = next(self.chunks_iter)
+            self._chunk_index = 0
+            self._total_chunks = self._compute_total_chunks()
+            self.current_chunk = self._load_chunk_at_index(self._chunk_index)
         log.debug("Chunk size set to: %d", self.config.chunk_size)
         log.debug("Reset classification is set to: %s", self.config.reset_classification)
 
+    def _compute_total_chunks(self) -> int:
+        header = self._get_original_las_header()
+        chunk_size = self.config.chunk_size
+        n = header.point_count
+        if chunk_size <= 0:
+            return 1 if n > 0 else 0
+        return (n + chunk_size - 1) // chunk_size
+
+    def _load_chunk_at_index(self, index: int):
+        """
+        Load the i-th chunk from the input file (0-based). Reads sequentially
+        from the start of the file until the requested index is reached.
+        """
+        for i, chunk in enumerate(self._read_input_file_in_chunks()):
+            if i == index:
+                return chunk
+        raise IndexError(f"No chunk at index {index}")
+
+    def iterate_chunk(self, delta: int) -> bool:
+        """
+        Move `current_chunk` forward or backward along input chunks.
+
+        Args:
+            delta: +1 for next chunk, -1 for previous (other values move by
+                that many chunks).
+
+        Returns:
+            True if the current chunk changed, False if the target index is
+            out of range (e.g. no next/previous chunk).
+        """
+        if not getattr(self, "_total_chunks", None):
+            log.warning("iterate_chunk: input chunks are not loaded")
+            return False
+        new_index = self._chunk_index + delta
+        if new_index < 0 or new_index >= self._total_chunks:
+            return False
+        self._chunk_index = new_index
+        self.current_chunk = self._load_chunk_at_index(new_index)
+        return True
 
     def _get_original_las_header(self):
         with laspy.open(self.config.input_file) as las:
@@ -115,7 +155,13 @@ class LasWrapper:
             log.debug("Wrote snapshot")
 
     def restore_snapshot(self):
+        """
+        Restore the snapshot from the `.snapshot.las` file.
+        """
         input_file_path = ".snapshot.las"
+        if not os.path.exists(input_file_path):
+            self.save_snapshot()
+
         with laspy.open(input_file_path) as reader:
             las_data = reader.read()
             pcd = o3d.geometry.PointCloud()
