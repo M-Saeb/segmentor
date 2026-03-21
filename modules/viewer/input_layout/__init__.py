@@ -4,6 +4,7 @@ from .filter_noise import InputLayoutFilterNoise
 from .ground_segmentation import InputLayoutGroundSegmentation
 from .post_wall_noise_filter import InputLayoutFilterNoiseAfterWallSegmentation
 from .wall_segmentation import InputLayoutWallSegmentation
+from .objects_segmentation import InputLayoutObjectsSegmentation
 
 _STAGE_NAME_TO_LAYOUT = {
     "Filter Noise": InputLayoutFilterNoise,
@@ -11,6 +12,7 @@ _STAGE_NAME_TO_LAYOUT = {
     "Ceiling Segmentation": InputLayoutCeilingSegmentation,
     "Wall Segmentation": InputLayoutWallSegmentation,
     "Post-wall Noise Filter": InputLayoutFilterNoiseAfterWallSegmentation,
+    "Objects Segmentation": InputLayoutObjectsSegmentation,
 }
 
 
@@ -31,5 +33,6 @@ __all__ = [
     "InputLayoutCeilingSegmentation",
     "InputLayoutWallSegmentation",
     "InputLayoutFilterNoiseAfterWallSegmentation",
+    "InputLayoutObjectsSegmentation",
     "create_input_layout_for_stage",
 ]

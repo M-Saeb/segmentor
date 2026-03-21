@@ -44,6 +44,11 @@ class SegmentorConfig:
         "enable": False,
         "filter_noise_after_segmenetation": True,
     }
+    objects_segmentation: dict = {
+        "enable": False,
+        "eps": 0.05,
+        "min_points": 10,
+    }
     result = {
         "display_result": True,
         "output_folder_path": "./result",
@@ -85,4 +90,14 @@ class SegmentorConfig:
             raise ValueError(
                 "Invalid ceiling_segmentation height configuration: "
                 f"min_height_above_ground={min_h}, max_height_above_ground={max_h}"
+            )
+
+        obj_cfg = config_data.get("objects_segmentation", self.objects_segmentation)
+        eps = obj_cfg.get("eps", 0.05)
+        min_pts = obj_cfg.get("min_points", 10)
+        if eps <= 0:
+            raise ValueError(f"objects_segmentation.eps must be positive, got {eps}")
+        if min_pts < 2:
+            raise ValueError(
+                f"objects_segmentation.min_points must be >= 2, got {min_pts}"
             )

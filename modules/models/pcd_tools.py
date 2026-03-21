@@ -697,6 +697,66 @@ def filter_noise_for_none_classified_points(pcd, points_attributes, nb_neighbors
     return new_pcd, new_points_attributes
 
 
+def _dbscan_cluster_mask(labels: np.ndarray) -> np.ndarray:
+    """True where Open3D DBSCAN assigned a cluster id (>= 0); False for noise (-1)."""
+    return np.asarray(labels, dtype=np.int64) >= 0
+
+
+def segment_objects_dbscan(pcd, points_attributes, eps, min_points):
+    """
+    Run DBSCAN on points still classified as INIT only; assign PCB_CLASSIFICATION_OBJECTS
+    to all points that belong to a cluster. Noise points (-1) stay INIT.
+
+    Neighbors are computed only within the unclassified subset so clusters cannot
+    bridge through ground, walls, or ceiling.
+    """
+    classification = points_attributes.get("classification", None)
+    if classification is None:
+        log.warning(
+            "segment_objects_dbscan: missing 'classification'; skipping object segmentation."
+        )
+        return pcd, points_attributes
+
+    classification = np.asarray(classification)
+    num_points = len(pcd.points)
+    if classification.shape[0] != num_points:
+        log.warning(
+            "segment_objects_dbscan: classification length %d != num points %d; skipping.",
+            classification.shape[0],
+            num_points,
+        )
+        return pcd, points_attributes
+
+    unclassified_mask = classification == constants.PCB_CLASSIFICATION_INIT
+    n_unclassified = int(np.sum(unclassified_mask))
+    if n_unclassified == 0:
+        log.info("No unclassified points for DBSCAN object segmentation; skipping.")
+        return pcd, points_attributes
+
+    unclassified_indices = np.where(unclassified_mask)[0]
+    subset_pcd = pcd.select_by_index(unclassified_indices)
+    labels = np.asarray(
+        subset_pcd.cluster_dbscan(eps=eps, min_points=min_points, print_progress=False)
+    )
+
+    clustered_mask = _dbscan_cluster_mask(labels)
+    n_clustered = int(np.sum(clustered_mask))
+    n_noise = int(np.sum(~clustered_mask))
+    log.info(
+        "DBSCAN on %d unclassified points: %d clustered, %d noise (-1).",
+        n_unclassified,
+        n_clustered,
+        n_noise,
+    )
+    if n_clustered == 0:
+        return pcd, points_attributes
+
+    global_object_indices = unclassified_indices[clustered_mask]
+    classification = classification.copy()
+    classification[global_object_indices] = constants.PCB_CLASSIFICATION_OBJECTS
+    points_attributes["classification"] = classification
+    return pcd, points_attributes
+
 
 def take_screenshot(pcd, dir_name):
     """

@@ -81,6 +81,7 @@ class PCDPreviewer:
             constants.PCB_CLASSIFICATION_GROUND: np.array([0.0, 1.0, 0.0]),  # ground -> green
             constants.PCB_CLASSIFICATION_WALL: np.array([0.0, 0.0, 1.0]),  # wall -> blue
             constants.PCB_CLASSIFICATION_CEILING: np.array([1.0, 0.0, 0.0]),  # ceiling -> red
+            constants.PCB_CLASSIFICATION_OBJECTS: np.array([1.0, 0.85, 0.0]),  # objects -> yellow
         }
 
         cls_colors = np.empty((len(cls_arr), 3), dtype=float)

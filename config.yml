@@ -32,6 +32,11 @@ wall_segmentation:
   enable: true
   filter_noise_after_segmenetation: true
 
+objects_segmentation:
+  enable: false
+  eps: 0.05
+  min_points: 10
+
 result: # the resulted pointed cloud from the program
   display_result: false
   output_folder_path: "/home/mohammedalsalihi/LidarData/for_mohammed/fh_underground_result"

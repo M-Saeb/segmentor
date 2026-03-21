@@ -27,7 +27,7 @@ class Controller:
 
         The setup pipeline operates on a single preview chunk, allowing the user
         to tune parameters stage-by-stage (noise filter, ground/ceiling/wall
-        segmentation, etc.). Its structure is later cloned into a "process"
+        segmentation, object clustering, etc.). Its structure is later cloned into a "process"
         pipeline that is applied to every chunk of the input file.
         """
         new_pipeline = Pipeline(kind="setup")
@@ -48,6 +48,10 @@ class Controller:
             new_pipeline.stages.append(self._make_wall_segmentation_stage())
             if wall_cfg.get("filter_noise_after_segmenetation", False):
                 new_pipeline.stages.append(self._make_post_wall_segmentation_noise_filter_stage())
+
+        objects_cfg = getattr(self.config, "objects_segmentation", {})
+        if objects_cfg.get("enable", False):
+            new_pipeline.stages.append(self._make_objects_segmentation_stage())
 
         if len(new_pipeline.stages) == 0:
             raise ValueError("No stages for the setup pipeline were created")
@@ -149,6 +153,21 @@ class Controller:
                 "nb_neighbors": default_nb_neighbors,
                 "std_ratio": default_std_ratio,
             },
+        )
+
+    def _make_objects_segmentation_stage(self) -> PipelineStage:
+        obj_cfg = getattr(self.config, "objects_segmentation", {})
+        params: Dict[str, object] = {
+            "eps": obj_cfg.get("eps", 0.05),
+            "min_points": int(obj_cfg.get("min_points", 10)),
+        }
+        return PipelineStage(
+            name="Objects Segmentation",
+            func=lambda **kwargs: self._pipeline_functions_wrapper(
+                pcd_tools.segment_objects_dbscan,
+                **kwargs,
+            ),
+            params=params,
         )
 
     def switch_to_next_setup_pipeline_stage(self):
@@ -254,6 +273,8 @@ class Controller:
             func = self._process_wall_segmentation_stage
         elif name == "Post-wall Noise Filter":
             func = self._process_post_wall_noise_filter_stage
+        elif name == "Objects Segmentation":
+            func = self._process_objects_segmentation_stage
         else:
             # Fallback: reuse the same callable, assuming it accepts
             # (pcd, points_attributes, **params) for processing as well.
@@ -288,6 +309,13 @@ class Controller:
 
     def _process_post_wall_noise_filter_stage(self, pcd, points_attributes, **kwargs):
         return pcd_tools.filter_noise_for_none_classified_points(
+            pcd,
+            points_attributes,
+            **kwargs
+        )
+
+    def _process_objects_segmentation_stage(self, pcd, points_attributes, **kwargs):
+        return pcd_tools.segment_objects_dbscan(
             pcd,
             points_attributes,
             **kwargs
