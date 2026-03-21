@@ -2,7 +2,7 @@ name: segmentor
 channels:
   - defaults
   - conda-forge
-  - main
+  - anaconda
 dependencies:
   - _libgcc_mutex=0.1=main
   - _openmp_mutex=5.1=1_gnu
@@ -11,7 +11,9 @@ dependencies:
   - aiohttp=3.13.2=py311hee96239_0
   - aiosignal=1.4.0=py311h06a4308_0
   - alsa-lib=1.2.14=h5eee18b_0
+  - annotated-doc=0.0.4=py311h06a4308_0
   - ansi2html=1.9.2=py311h06a4308_0
+  - anyio=4.12.1=py311h06a4308_0
   - assimp=5.4.3=he621ea3_0
   - attr=2.5.2=h39aace5_0
   - attrs=25.4.0=py311h06a4308_2
@@ -30,16 +32,18 @@ dependencies:
   - cffi=2.0.0=py311h4eded50_1
   - charset-normalizer=3.4.4=py311h06a4308_0
   - cli11=2.1.2=h295c915_0
-  - click=8.2.1=py311h06a4308_1
   - contourpy=1.3.3=py311hdb19cb5_0
-  - cycler=0.11.0=pyhd3eb1b0_0
   - cyrus-sasl=2.1.28=h1110e0f_3
-  - dash=3.2.0=py311hd0c6730_0
   - dbus=1.16.2=h5bd4931_0
+  - dnspython=2.8.0=py311h06a4308_0
   - docutils=0.21.2=py311h06a4308_1
   - double-conversion=3.3.1=h6a678d5_0
+  - email-validator=2.3.0=py311h06a4308_0
   - embree=4.4.0=ha751380_1
   - expat=2.7.3=h3385a95_0
+  - fastapi=0.128.0=py311h06a4308_0
+  - fastapi-cli=0.0.20=py311h06a4308_0
+  - fastapi-core=0.128.0=py311h06a4308_0
   - flask=3.1.2=py311h06a4308_0
   - flask-compress=1.23=py311h06a4308_0
   - fmt=11.2.0=hca5f364_0
@@ -50,7 +54,6 @@ dependencies:
   - fontconfig=2.15.0=h7e30c49_1
   - fonts-anaconda=1=h8fa9717_0
   - fonts-conda-ecosystem=1=hd3eb1b0_0
-  - fonttools=4.60.1=py311hee96239_0
   - freetype=2.14.1=ha770c72_0
   - frozenlist=1.8.0=py311hbdd6827_0
   - gettext=0.25.1=h3f43e3d_1
@@ -59,12 +62,15 @@ dependencies:
   - glew=2.2.0=hcfb9eae_1
   - glfw=3.4=h7389608_0
   - graphite2=1.3.14=h295c915_1
+  - h11=0.16.0=py311h06a4308_1
   - harfbuzz=12.2.0=h15599e2_0
   - hdf4=4.2.15=h2a13503_7
   - hdf5=1.14.6=nompi_h6e4c0c1_103
+  - httpcore=1.0.9=py311h06a4308_0
+  - httptools=0.7.1=py311h47b2149_0
+  - httpx=0.28.1=py311h06a4308_1
   - icu=75.1=he02047a_0
   - idna=3.11=py311h06a4308_0
-  - importlib-metadata=8.7.0=py311h06a4308_0
   - itsdangerous=2.2.0=py311h06a4308_0
   - jinja2=3.1.6=py311h06a4308_0
   - jsoncpp=1.9.6=hfbf14b3_0
@@ -151,30 +157,23 @@ dependencies:
   - loguru=0.7.3=py311h06a4308_0
   - lz4-c=1.10.0=h5888daf_1
   - m2r2=0.3.4=pyhd8ed1ab_0
-  - markupsafe=3.0.2=py311h5eee18b_0
-  - matplotlib-base=3.10.6=py311h71dd3da_1
+  - markdown-it-py=2.2.0=py311h06a4308_1
+  - mdurl=0.1.2=py311h06a4308_0
   - mistune=0.8.4=py311h5eee18b_1000
   - msgpack-python=1.1.1=py311h6a678d5_0
   - multidict=6.7.0=py311hee96239_0
-  - narwhals=2.7.0=py311h06a4308_0
   - ncurses=6.5=h7934f7d_0
   - nest-asyncio=1.6.0=py311h06a4308_0
   - nlohmann_json=3.11.2=h6a678d5_0
   - nomkl=3.0=0
-  - numpy=1.26.3=py311h24aa872_0
-  - numpy-base=1.26.3=py311hbfb1bba_0
-  - open3d=0.19.0=py311hed8de4c_6
   - openblas=0.3.30=h5426c36_2
   - openblas-devel=0.3.30=h557178c_2
   - openjpeg=2.5.4=h4e0627c_1
   - openldap=2.6.10=he9288cc_1
   - openssl=3.6.0=h26f9b46_0
-  - packaging=25.0=py311h06a4308_1
   - pcre2=10.46=hf426167_0
-  - pillow=12.0.0=py311hf88fc01_2
   - pip=25.3=pyhc872135_0
   - pixman=0.46.4=h7934f7d_0
-  - plotly=6.5.0=py311h7040dfc_0
   - proj=9.7.0=hb72c0af_0
   - propcache=0.3.1=py311h5eee18b_0
   - pthread-stubs=0.3=h0ce48e5_1
@@ -182,33 +181,47 @@ dependencies:
   - pybind11-abi=4=hd3eb1b0_1
   - pycares=4.10.0=py311ha137689_0
   - pycparser=2.23=py311h06a4308_0
-  - pyparsing=3.2.5=py311h06a4308_0
+  - pydantic=2.12.5=py311h06a4308_0
+  - pydantic-core=2.41.5=py311h498d7c9_1
+  - pydantic-extra-types=2.11.0=py311h06a4308_0
+  - pydantic-settings=2.12.0=py311h06a4308_0
+  - pygments=2.19.2=py311h06a4308_0
   - pysocks=1.7.1=py311h06a4308_1
   - python=3.11.6=hab00c5b_0_cpython
   - python-dateutil=2.9.0post0=py311h06a4308_2
+  - python-dotenv=1.2.1=py311h06a4308_0
+  - python-multipart=0.0.22=py311h06a4308_0
   - python_abi=3.11=3_cp311
   - pyyaml=6.0.3=py311h591646f_0
   - qhull=2020.2=hdb19cb5_2
   - qt6-main=6.9.3=h5c1c036_1
   - readline=8.3=hc2a1206_0
   - requests=2.32.5=py311h06a4308_1
-  - retrying=1.3.3=pyhd3eb1b0_2
-  - setuptools=80.9.0=py311h06a4308_0
+  - rich=14.2.0=py311h06a4308_0
+  - rich-toolkit=0.17.1=py311h06a4308_0
+  - shellingham=1.5.4=py311h06a4308_0
   - six=1.17.0=py311h06a4308_0
   - snappy=1.2.1=h6a678d5_0
   - sqlite=3.51.0=h2a70700_0
+  - starlette=0.47.3=py311h06a4308_0
   - tbb=2022.3.0=h698db13_0
   - tinyobjloader=1.0.7=h59595ed_2
   - tk=8.6.15=h54e0aa7_0
+  - typer=0.20.0=py311h06a4308_1
+  - typer-slim=0.20.0=py311h06a4308_1
+  - typer-slim-standard=0.20.0=py311h06a4308_1
   - typing-extensions=4.15.0=py311h06a4308_0
+  - typing-inspection=0.4.2=py311h06a4308_0
   - typing_extensions=4.15.0=py311h06a4308_0
   - tzdata=2025b=h04d1e81_0
-  - urllib3=2.5.0=py311h06a4308_0
   - utfcpp=3.2.1=h06a4308_0
+  - uvicorn=0.40.0=py311h06a4308_0
+  - uvicorn-standard=0.40.0=py311h06a4308_0
   - uvloop=0.22.1=py311h939ff40_1
   - vtk-base=9.5.1=py311h0db28e7_7
+  - watchfiles=1.1.1=py311h828f358_1
   - wayland=1.24.0=hdac8c69_0
-  - werkzeug=3.1.3=py311h06a4308_0
+  - websockets=15.0.1=py311h5eee18b_0
   - wheel=0.45.1=py311h06a4308_0
   - wslink=2.5.0=pyhd8ed1ab_0
   - xcb-util=0.4.1=h5eee18b_2
@@ -245,3 +258,61 @@ dependencies:
   - zlib=1.3.1=hb25bd0a_0
   - zlib-ng=2.3.1=h54a6638_1
   - zstd=1.5.7=h3691f8a_5
+  - pip:
+      - addict==2.4.0
+      - annotated-types==0.7.0
+      - asttokens==3.0.1
+      - click==8.3.1
+      - comm==0.2.3
+      - configargparse==1.7.1
+      - cycler==0.12.1
+      - dash==4.0.0
+      - decorator==5.2.1
+      - executing==2.2.1
+      - fastjsonschema==2.21.2
+      - fonttools==4.61.1
+      - importlib-metadata==8.7.1
+      - ipython==9.10.0
+      - ipython-pygments-lexers==1.1.1
+      - ipywidgets==8.1.8
+      - jedi==0.19.2
+      - joblib==1.5.3
+      - jsonschema==4.26.0
+      - jsonschema-specifications==2025.9.1
+      - jupyter-core==5.9.1
+      - jupyterlab-widgets==3.0.16
+      - markupsafe==3.0.3
+      - matplotlib==3.10.8
+      - matplotlib-inline==0.2.1
+      - narwhals==2.16.0
+      - nbformat==5.10.4
+      - numpy==2.4.2
+      - ollama==0.6.1
+      - open3d==0.19.0
+      - packaging==26.0
+      - pandas==3.0.0
+      - parso==0.8.6
+      - pexpect==4.9.0
+      - pillow==12.1.1
+      - platformdirs==4.9.0
+      - plotly==6.5.2
+      - prompt-toolkit==3.0.52
+      - ptyprocess==0.7.0
+      - pure-eval==0.2.3
+      - pyparsing==3.3.2
+      - pyquaternion==0.9.9
+      - referencing==0.37.0
+      - retrying==1.4.2
+      - rpds-py==0.30.0
+      - scikit-learn==1.8.0
+      - scipy==1.17.0
+      - setuptools==82.0.0
+      - stack-data==0.6.3
+      - threadpoolctl==3.6.0
+      - tqdm==4.67.3
+      - traitlets==5.14.3
+      - urllib3==2.6.3
+      - wcwidth==0.6.0
+      - werkzeug==3.1.5
+      - widgetsnbextension==4.0.15
+prefix: /home/mohammedalsalihi/miniconda3/envs/segmentor
