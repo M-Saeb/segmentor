@@ -1,4 +1,5 @@
-from typing import Dict
+from typing import Dict, FrozenSet
+
 from modules.utils.config import SegmentorConfig
 from modules.shared.pipeline import PipelineStage, Pipeline
 from modules.models.las_wrapper import LasWrapper
@@ -9,14 +10,28 @@ from .pcd_previewer import PCDPreviewer
 
 log = get_dual_logger(__name__)
 
+# Stage names that map to dedicated process callables in `_make_process_stage`.
+KNOWN_PROCESS_STAGE_NAMES: FrozenSet[str] = frozenset(
+    {
+        "Filter Noise",
+        "Ground Segmentation",
+        "Ceiling Segmentation",
+        "Wall Segmentation",
+        "Post-wall Noise Filter",
+        "Objects Segmentation",
+    }
+)
+
 
 class Controller:
-    def __init__(self, config: SegmentorConfig):
+    def __init__(self, config: SegmentorConfig, *, require_setup_pipeline: bool = True):
         self.config = config
         self.las_wrapper = LasWrapper(config, auto_read_input_file=True)
         self.result_generator = ResultGenerator(config)
-        # Setup pipeline works on the current preview chunk
-        self.setup_pipeline = self._create_setup_pipeline()
+        if require_setup_pipeline:
+            self.setup_pipeline = self._create_setup_pipeline()
+        else:
+            self.setup_pipeline = Pipeline(kind="setup")
         # Will be populated later when building the full processing pipeline
         self.process_pipeline: Pipeline | None = None
 
@@ -256,6 +271,65 @@ class Controller:
 
         self.process_pipeline = process_pipeline
         return process_pipeline
+
+    def load_process_pipeline_from_dict(self, data: dict) -> None:
+        """
+        Build `self.process_pipeline` from a serialized process pipeline dict
+        (same shape as `Pipeline.to_dict()` / process YAML files).
+
+        Intended for headless runs and future embedding in app config.
+        """
+        if not data or data.get("kind") != "process":
+            raise ValueError('Pipeline data must be a dict with kind: "process"')
+
+        raw_stages = data.get("stages")
+        if raw_stages is None:
+            raise ValueError("Pipeline data must contain a 'stages' list")
+
+        process_pipeline = Pipeline(kind="process")
+
+        for entry in raw_stages:
+            if not isinstance(entry, dict):
+                raise ValueError(f"Each stage must be a dict, got {type(entry)!r}")
+            if not entry.get("enabled", True):
+                continue
+            name = entry.get("name")
+            if not name or not isinstance(name, str):
+                raise ValueError(f"Each enabled stage must have a non-empty string 'name': {entry!r}")
+            if name not in KNOWN_PROCESS_STAGE_NAMES:
+                raise ValueError(
+                    f"Unknown pipeline stage name {name!r}. "
+                    f"Supported names: {sorted(KNOWN_PROCESS_STAGE_NAMES)}"
+                )
+            params = dict(entry.get("params") or {})
+            if name == "Objects Segmentation":
+                params = self._merge_objects_segmentation_pipeline_params(params)
+
+            placeholder = PipelineStage(
+                name=name,
+                func=lambda **kwargs: None,
+                params=params,
+                enabled=True,
+            )
+            process_pipeline.stages.append(self._make_process_stage(placeholder))
+
+        if not process_pipeline.stages:
+            raise ValueError("No enabled stages in process pipeline data")
+
+        self.process_pipeline = process_pipeline
+
+    def _merge_objects_segmentation_pipeline_params(self, params: Dict[str, object]) -> Dict[str, object]:
+        obj_cfg = getattr(self.config, "objects_segmentation", {})
+        defaults: Dict[str, object] = {
+            "eps": obj_cfg.get("eps", 0.05),
+            "min_points": int(obj_cfg.get("min_points", 10)),
+            "ollama_model": obj_cfg.get("ollama_model", "gemma3:4b"),
+            "vlm_traces_subdir": obj_cfg.get("vlm_traces_subdir", "vlm_object_traces"),
+        }
+        merged = {**defaults, **params}
+        merged["output_folder_path"] = self.result_generator.output_folder_path
+        merged["chunk_index"] = 0
+        return merged
 
     def _make_process_stage(self, setup_stage: PipelineStage) -> PipelineStage:
         """

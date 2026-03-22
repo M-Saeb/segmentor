@@ -287,7 +287,7 @@ def apply_ransac_wall_detection(
 
     plane_id = 0
 
-    log.info("Starting RANSAC detection on %d points...", len(points))
+    log.info("Starting RANSAC Wall Segmentation on %d points...", len(points))
 
     while len(remaining_indices) > len(points) * min_plane_size_ratio:
         # Apply RANSAC to detect one plane
@@ -354,7 +354,7 @@ def apply_ransac_wall_detection(
 
     points_attributes['classification'] = classification
 
-    log.info("RANSAC complete: %d planes found, %d walls detected, %d points labeled as WALL", 
+    log.info("Walls RANSAC Segmentation complete: %d planes found, %d walls detected, %d points labeled as WALL", 
              len(detected_planes), len(wall_indices), assigned_count)
 
     return points_attributes
@@ -866,9 +866,10 @@ def mask_indices_for_object_vlm_view(classification, object_cluster_id, cluster_
     classification = np.asarray(classification)
     object_cluster_id = np.asarray(object_cluster_id, dtype=np.int32)
     ground = classification == constants.PCB_CLASSIFICATION_GROUND
-    init_pts = classification == constants.PCB_CLASSIFICATION_INIT
+    # init_pts = classification == constants.PCB_CLASSIFICATION_INIT
     this_object = object_cluster_id == cluster_id
-    combined = ground | init_pts | this_object
+    # combined = ground | init_pts | this_object
+    combined = ground | this_object
     return np.where(combined)[0]
 
 
