@@ -3,6 +3,7 @@ import shutil
 import yaml
 from modules.utils import config
 from modules.models.las_wrapper import LasWrapper
+from modules.models.ai_object_detector import identified_objects_yaml_path
 from modules.utils.log_utils import get_dual_logger
 
 log = get_dual_logger(__name__)
@@ -41,6 +42,10 @@ class ResultGenerator:
                 os.makedirs(output_folder_path, exist_ok=False)
 
         return output_folder_path
+
+    def path_for_identified_objects_yaml(self) -> str:
+        """Path to identified_objects.yml under the run output folder."""
+        return identified_objects_yaml_path(self.output_folder_path)
 
     def write_pipeline_yaml(self, pipeline_data: dict):
         """Write the process pipeline (kind and stages with params) to pipeline.yml in the output folder."""

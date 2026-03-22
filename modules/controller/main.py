@@ -160,11 +160,17 @@ class Controller:
         params: Dict[str, object] = {
             "eps": obj_cfg.get("eps", 0.05),
             "min_points": int(obj_cfg.get("min_points", 10)),
+            "output_folder_path": self.result_generator.output_folder_path,
+            "chunk_index": 0,
+            "ollama_model": obj_cfg.get("ollama_model", "gemma3:4b"),
+            "vlm_traces_subdir": obj_cfg.get("vlm_traces_subdir", "vlm_object_traces"),
+            # Setup preview: DBSCAN only; VLM runs in run_process_pipeline_on_all_chunks only.
+            "enable_vlm": False,
         }
         return PipelineStage(
             name="Objects Segmentation",
             func=lambda **kwargs: self._pipeline_functions_wrapper(
-                pcd_tools.segment_objects_dbscan,
+                pcd_tools.segment_objects,
                 **kwargs,
             ),
             params=params,
@@ -315,7 +321,9 @@ class Controller:
         )
 
     def _process_objects_segmentation_stage(self, pcd, points_attributes, **kwargs):
-        return pcd_tools.segment_objects_dbscan(
+        kwargs = dict(kwargs)
+        kwargs["enable_vlm"] = True
+        return pcd_tools.segment_objects(
             pcd,
             points_attributes,
             **kwargs
@@ -343,6 +351,8 @@ class Controller:
         for index, pcd, points_attributes in self.las_wrapper.iter_input_chunks():
             for stage in self.process_pipeline.stages:
                 stage_kwargs = dict(stage.params)
+                if stage.name == "Objects Segmentation":
+                    stage_kwargs["chunk_index"] = index
                 pcd, points_attributes = stage.func(
                     pcd=pcd,
                     points_attributes=points_attributes,

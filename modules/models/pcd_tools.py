@@ -1,6 +1,10 @@
 import os
 import numpy as np
 import open3d as o3d
+from modules.models.ai_object_detector import (
+    identify_object_from_views,
+    merge_identified_objects_record,
+)
 from modules.utils.log_utils import get_dual_logger
 from modules.utils import constants
 
@@ -709,7 +713,11 @@ def segment_objects_dbscan(pcd, points_attributes, eps, min_points):
 
     Neighbors are computed only within the unclassified subset so clusters cannot
     bridge through ground, walls, or ceiling.
+
+    Sets object_cluster_id (1..K per cluster) when clusters exist; removed by segment_objects
+    before downstream use. Cleared at start if present from a previous run.
     """
+    points_attributes.pop("object_cluster_id", None)
     classification = points_attributes.get("classification", None)
     if classification is None:
         log.warning(
@@ -754,40 +762,50 @@ def segment_objects_dbscan(pcd, points_attributes, eps, min_points):
     global_object_indices = unclassified_indices[clustered_mask]
     classification = classification.copy()
     classification[global_object_indices] = constants.PCB_CLASSIFICATION_OBJECTS
+
+    # Sequential cluster ids 1..K for each DBSCAN cluster (Open3D labels may be non-contiguous).
+    object_cluster_id = np.zeros(num_points, dtype=np.int32)
+    raw_to_seq = {}
+    seq = 1
+    for raw in sorted(np.unique(labels[labels >= 0])):
+        raw_to_seq[int(raw)] = seq
+        seq += 1
+    for i, gidx in enumerate(unclassified_indices):
+        lab = int(labels[i])
+        if lab >= 0:
+            object_cluster_id[gidx] = raw_to_seq[lab]
+
     points_attributes["classification"] = classification
+    points_attributes["object_cluster_id"] = object_cluster_id
     return pcd, points_attributes
 
 
-def take_screenshot(pcd, dir_name):
+def take_isometric_screenshots(pcd, dir_name, file_prefix=""):
     """
-    Save two screenshots of the point cloud, approximating
-    CloudCompare's "front isometric" and "back isometric" views.
+    Save front and back isometric PNGs of the point cloud (RGB via pcd.colors).
 
-    Images are saved as:
-        {dir_name}/front_isometric.png
-        {dir_name}/back_isometric.png
+    If file_prefix is empty, writes:
+        {dir_name}/front_isometric.png, {dir_name}/back_isometric.png
+    Otherwise:
+        {dir_name}/{file_prefix}_front_isometric.png, etc.
     """
     if not os.path.exists(dir_name):
-        os.mkdir(dir_name)
+        os.makedirs(dir_name, exist_ok=True)
 
     width, height = 640, 480
     renderer = o3d.visualization.rendering.OffscreenRenderer(width, height)
 
-    # Setup scene & material
     mat = o3d.visualization.rendering.MaterialRecord()
     mat.shader = "defaultUnlit"
     renderer.scene.add_geometry("cloud", pcd, mat)
 
-    # Basic geometry info
     center = np.asarray(pcd.get_center(), dtype=float)
     bounds = pcd.get_axis_aligned_bounding_box()
     diag = float((bounds.get_max_bound() - bounds.get_min_bound()).max())
 
-    # Distance of camera from center (scaled by bbox size) - slightly zoomed in
     radius = max(1e-6, diag * 1.0)
     up = [0.0, 0.0, 1.0]
 
-    # Approximate isometric angles: ~35° elevation, 45° and 225° azimuth
     elev_deg = 35.0
     elev = np.deg2rad(elev_deg)
     z_off = radius * np.sin(elev)
@@ -800,11 +818,159 @@ def take_screenshot(pcd, dir_name):
 
     for name, az_deg in views.items():
         theta = np.deg2rad(az_deg)
-        # orbit in XY plane around Z-up axis
         x_off = horiz_r * np.cos(theta)
         y_off = horiz_r * np.sin(theta)
         eye = center + np.array([x_off, y_off, z_off], dtype=float)
 
         renderer.setup_camera(60.0, center, eye, up)
         img = renderer.render_to_image()
-        o3d.io.write_image(os.path.join(dir_name, f"{name}.png"), img)
+        if file_prefix:
+            fname = f"{file_prefix}_{name}.png"
+        else:
+            fname = f"{name}.png"
+        o3d.io.write_image(os.path.join(dir_name, fname), img)
+        log.debug("Saved %s/%s", dir_name, fname)
+
+
+def take_screenshot(pcd, dir_name):
+    """
+    Save two screenshots of the point cloud, approximating
+    CloudCompare's "front isometric" and "back isometric" views.
+
+    Images are saved as:
+        {dir_name}/front_isometric.png
+        {dir_name}/back_isometric.png
+    """
+    take_isometric_screenshots(pcd, dir_name, file_prefix="")
+
+
+def _apply_rgb_colors_to_pcd(pcd, points_attributes):
+    """Set pcd.colors from LAS red/green/blue (same normalization as PCDPreviewer)."""
+    red = np.asarray(points_attributes.get("red"))
+    green = np.asarray(points_attributes.get("green"))
+    blue = np.asarray(points_attributes.get("blue"))
+    n = len(pcd.points)
+    if not (len(red) == len(green) == len(blue) == n):
+        raise ValueError("RGB attribute lengths do not match point count")
+    rgb = np.vstack((red, green, blue)).T.astype(float)
+    max_val = np.max(rgb)
+    if max_val > 0:
+        rgb /= max_val
+    pcd.colors = o3d.utility.Vector3dVector(rgb)
+
+
+def mask_indices_for_object_vlm_view(classification, object_cluster_id, cluster_id):
+    """
+    Ground + target cluster + unclassified (INIT) points only (excludes other clusters, walls, ceiling).
+    """
+    classification = np.asarray(classification)
+    object_cluster_id = np.asarray(object_cluster_id, dtype=np.int32)
+    ground = classification == constants.PCB_CLASSIFICATION_GROUND
+    init_pts = classification == constants.PCB_CLASSIFICATION_INIT
+    this_object = object_cluster_id == cluster_id
+    combined = ground | init_pts | this_object
+    return np.where(combined)[0]
+
+
+def segment_objects(
+    pcd,
+    points_attributes,
+    eps,
+    min_points,
+    *,
+    output_folder_path,
+    chunk_index=0,
+    ollama_model="gemma3:4b",
+    vlm_traces_subdir="vlm_object_traces",
+    enable_vlm=True,
+    **kwargs,
+):
+    """
+    DBSCAN object segmentation, optionally followed by per-cluster RGB screenshots and VLM labeling.
+
+    When enable_vlm is False (e.g. setup GUI preview), only DBSCAN runs; no screenshots or Ollama.
+    Removes internal object_cluster_id before return (classification unchanged for objects).
+    """
+    pcd, points_attributes = segment_objects_dbscan(
+        pcd, points_attributes, eps, min_points
+    )
+
+    oc_id = points_attributes.get("object_cluster_id")
+    if not enable_vlm:
+        points_attributes.pop("object_cluster_id", None)
+        return pcd, points_attributes
+
+    traces_dir = os.path.join(output_folder_path, vlm_traces_subdir)
+    os.makedirs(traces_dir, exist_ok=True)
+
+    if oc_id is None:
+        return pcd, points_attributes
+
+    oc_id = np.asarray(oc_id, dtype=np.int32)
+    unique_clusters = sorted(int(c) for c in np.unique(oc_id) if c > 0)
+    if not unique_clusters:
+        points_attributes.pop("object_cluster_id", None)
+        return pcd, points_attributes
+
+    cls_arr = np.asarray(points_attributes["classification"])
+
+    for cid in unique_clusters:
+        try:
+            indices = mask_indices_for_object_vlm_view(cls_arr, oc_id, cid)
+            if len(indices) == 0:
+                log.warning("segment_objects: empty view for cluster %s; skipping", cid)
+                continue
+
+            view_pcd = pcd.select_by_index(indices)
+            view_attrs = {}
+            npt = len(cls_arr)
+            for k, v in points_attributes.items():
+                arr = np.asarray(v)
+                if arr.shape[0] == npt:
+                    view_attrs[k] = arr[indices]
+                else:
+                    view_attrs[k] = v
+
+            try:
+                _apply_rgb_colors_to_pcd(view_pcd, view_attrs)
+            except ValueError as e:
+                log.warning(
+                    "segment_objects: RGB missing for cluster %s (%s); skipping VLM.",
+                    cid,
+                    e,
+                )
+                continue
+
+            prefix = f"chunk{chunk_index:05d}_object{cid}"
+            take_isometric_screenshots(view_pcd, traces_dir, file_prefix=prefix)
+            front_name = f"{prefix}_front_isometric.png"
+            back_name = f"{prefix}_back_isometric.png"
+            front_path = os.path.join(traces_dir, front_name)
+            back_path = os.path.join(traces_dir, back_name)
+
+            try:
+                record = identify_object_from_views(
+                    front_path,
+                    back_path,
+                    cluster_id=cid,
+                    chunk_index=chunk_index,
+                    ollama_model=ollama_model,
+                )
+                merge_identified_objects_record(output_folder_path, record)
+            except Exception as ex:
+                log.warning(
+                    "segment_objects: VLM/YAML failed for cluster %s: %s",
+                    cid,
+                    ex,
+                    exc_info=True,
+                )
+        except Exception as ex:
+            log.warning(
+                "segment_objects: failed processing cluster %s: %s",
+                cid,
+                ex,
+                exc_info=True,
+            )
+
+    points_attributes.pop("object_cluster_id", None)
+    return pcd, points_attributes
