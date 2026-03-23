@@ -3,7 +3,7 @@ from typing import Dict, FrozenSet
 from modules.utils.config import SegmentorConfig
 from modules.utils.pipeline import PipelineStage, Pipeline
 from modules.models.las_wrapper import LasWrapper
-from modules.models.result_generator import ResultGenerator
+from modules.models import result_generator
 from modules.models import pcd_tools
 from modules.utils.log_utils import get_dual_logger
 from modules.utils import constants
@@ -16,7 +16,9 @@ class Controller:
     def __init__(self, config: SegmentorConfig, *, require_setup_pipeline: bool = True):
         self.config = config
         self.las_wrapper = LasWrapper(config, auto_read_input_file=True)
-        self.result_generator = ResultGenerator(config)
+        self.output_folder_path = result_generator.init_result_folder_path(config)
+        self.full_las_path = result_generator.get_output_las_path(self.output_folder_path)
+        self.output_las_writer = None
         if require_setup_pipeline:
             self.setup_pipeline = self._create_setup_pipeline()
         else:
@@ -164,7 +166,7 @@ class Controller:
         params: Dict[str, object] = {
             "eps": obj_cfg.get("eps", 0.05),
             "min_points": int(obj_cfg.get("min_points", 10)),
-            "output_folder_path": self.result_generator.output_folder_path,
+            "output_folder_path": self.output_folder_path,
             "chunk_index": 0,
             "ollama_model": obj_cfg.get("ollama_model", "gemma3:4b"),
             "vlm_traces_subdir": obj_cfg.get("vlm_traces_subdir", "vlm_object_traces"),
@@ -316,7 +318,7 @@ class Controller:
             "vlm_traces_subdir": obj_cfg.get("vlm_traces_subdir", "vlm_object_traces"),
         }
         merged = {**defaults, **params}
-        merged["output_folder_path"] = self.result_generator.output_folder_path
+        merged["output_folder_path"] = self.output_folder_path
         merged["chunk_index"] = 0
         return merged
 
@@ -407,9 +409,15 @@ class Controller:
         if self.process_pipeline is None or not self.process_pipeline.stages:
             return
 
-        self.result_generator.write_pipeline_yaml(self.process_pipeline.to_dict())
+        result_generator.create_pipeline_yaml_file(
+            self.output_folder_path,
+            self.process_pipeline.to_dict(),
+        )
 
-        self.result_generator.reset_las_file()
+        self.output_las_writer = result_generator.create_las_output_file(
+            self.config,
+            self.full_las_path,
+        )
 
         for index, pcd, points_attributes in self.las_wrapper.iter_input_chunks():
             for stage in self.process_pipeline.stages:
@@ -422,8 +430,14 @@ class Controller:
                     **stage_kwargs,
                 )
 
-            self.result_generator.write_las_chunk_to_file(index, pcd, points_attributes)
-        log.info("===== Finished writing to: %s ======", self.result_generator.full_las_path)
+            result_generator.write_las_chunk_to_output_file(
+                self.output_las_writer,
+                self.full_las_path,
+                index,
+                pcd,
+                points_attributes,
+            )
+        log.info("===== Finished writing to: %s ======", self.full_las_path)
 
     def _pipeline_functions_wrapper(self, callback, **kwargs):
         pcd, points_attributes = callback(
