@@ -1,7 +1,7 @@
 from typing import Dict, FrozenSet
 
 from modules.utils.config import SegmentorConfig
-from modules.shared.pipeline import PipelineStage, Pipeline
+from modules.utils.pipeline import PipelineStage, Pipeline
 from modules.models.las_wrapper import LasWrapper
 from modules.models.result_generator import ResultGenerator
 from modules.models import pcd_tools

@@ -1,4 +1,4 @@
-from modules.controller.main import PipelineStage
+from modules.utils.pipeline import PipelineStage
 from .base import InputLayout
 
 

@@ -79,7 +79,7 @@ def basic_ground_filter(points: np.ndarray, points_attributes, z_threshold):
         ground_mask = z_values <= x[right_idx]
         # Step 4: Update classification using previous values
         classification = points_attributes['classification']
-        classification[ground_mask] = constants.PCB_CLASSIFICATION_INIT
+        classification[ground_mask] = constants.PCB_CLASSIFICATION_GROUND
         points_attributes['classification'] = classification
         log.debug("Assigned classification: ground=%d, non-ground=%d", np.sum(ground_mask), np.sum(~ground_mask))
         return points_attributes

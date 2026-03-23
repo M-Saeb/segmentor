@@ -3,7 +3,7 @@ from typing import Any, Dict
 
 from open3d.visualization import gui
 
-from modules.shared.pipeline import PipelineStage
+from modules.utils.pipeline import PipelineStage
 from modules.utils.log_utils import get_dual_logger
 
 log = get_dual_logger(__name__)

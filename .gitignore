@@ -1,4 +1,6 @@
 __pycache__
 logs/
-screenshots/
+pipelines/
+.snapshot.las
 .vscode
+.cursor

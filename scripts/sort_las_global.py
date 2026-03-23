@@ -10,6 +10,9 @@ Modes:
 Reads via LasWrapper chunk iteration, merges in memory, sorts once, writes using the
 wrapper's header helper.
 
+Outputs a Segmentor VLR (JSON: ``segmentor_is_sorted``, ``sort_mode``) unless
+``--no-segmentor-vlr`` is set.
+
 Run from the project root so `modules` imports resolve, e.g.:
 
     python scripts/sort_las_global.py -i input.las -o sorted.las
@@ -19,11 +22,13 @@ Run from the project root so `modules` imports resolve, e.g.:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
 
 import laspy
+from laspy.vlrs import VLR
 import numpy as np
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -181,17 +186,40 @@ def _write_las(
     output_path: str,
     xyz: np.ndarray,
     merged_attrs: dict[str, np.ndarray],
+    *,
+    sort_mode: str,
+    write_segmentor_vlr: bool = True,
 ) -> None:
     """
     Write LAS in slices of ``wrap.config.chunk_size``, matching
     ``LasWrapper.initialize_output_file`` + ``write_pcb_chunk_to_file`` (append).
+
+    Optionally embeds a JSON VLR (user_id ``Segmentor``, record_id ``65001``) with
+    ``segmentor_is_sorted`` and ``sort_mode`` for downstream detection.
     """
     n = len(xyz)
     chunk_size = int(wrap.config.chunk_size)
     if chunk_size <= 0:
         chunk_size = max(n, 1)
 
-    wrap.initialize_output_file(output_path)
+    base_header = wrap._create_new_las_filer_header()
+    if write_segmentor_vlr:
+        payload = json.dumps(
+            {"segmentor_is_sorted": True, "sort_mode": sort_mode},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        base_header.vlrs.append(
+            VLR(
+                user_id="Segmentor",
+                record_id=65001,
+                description="segmentor_sort_metadata",
+                record_data=payload,
+            )
+        )
+
+    with laspy.open(output_path, mode="w", header=base_header) as _writer:
+        pass
+
     log.info("Writing %d points to %s in chunks of %d", n, output_path, chunk_size)
 
     for start in range(0, n, chunk_size):
@@ -250,6 +278,11 @@ def main() -> int:
         metavar="M",
         help="Stop subdividing when both XY edge lengths are at or below this (meters; spatial-xy only; 0=disabled).",
     )
+    parser.add_argument(
+        "--no-segmentor-vlr",
+        action="store_true",
+        help="Do not write the Segmentor JSON metadata VLR (segmentor_is_sorted).",
+    )
     args = parser.parse_args()
 
     input_path = os.path.abspath(args.input)
@@ -294,7 +327,14 @@ def main() -> int:
     for dim in list(merged_attrs.keys()):
         merged_attrs[dim] = merged_attrs[dim][order]
 
-    _write_las(wrap, output_path, xyz, merged_attrs)
+    _write_las(
+        wrap,
+        output_path,
+        xyz,
+        merged_attrs,
+        sort_mode=args.mode,
+        write_segmentor_vlr=not args.no_segmentor_vlr,
+    )
 
     print(f"Wrote {len(xyz):,} points ({label}) to {output_path}")
     return 0
