@@ -6,21 +6,10 @@ from modules.models.las_wrapper import LasWrapper
 from modules.models.result_generator import ResultGenerator
 from modules.models import pcd_tools
 from modules.utils.log_utils import get_dual_logger
+from modules.utils import constants
 from .pcd_previewer import PCDPreviewer
 
 log = get_dual_logger(__name__)
-
-# Stage names that map to dedicated process callables in `_make_process_stage`.
-KNOWN_PROCESS_STAGE_NAMES: FrozenSet[str] = frozenset(
-    {
-        "Filter Noise",
-        "Ground Segmentation",
-        "Ceiling Segmentation",
-        "Wall Segmentation",
-        "Post-wall Noise Filter",
-        "Objects Segmentation",
-    }
-)
 
 
 class Controller:
@@ -62,7 +51,7 @@ class Controller:
         if wall_cfg.get("enable", False):
             new_pipeline.stages.append(self._make_wall_segmentation_stage())
             if wall_cfg.get("filter_noise_after_segmenetation", False):
-                new_pipeline.stages.append(self._make_post_wall_segmentation_noise_filter_stage())
+                new_pipeline.stages.append(self._make_post_segmentation_noise_filter_stage())
 
         objects_cfg = getattr(self.config, "objects_segmentation", {})
         if objects_cfg.get("enable", False):
@@ -78,7 +67,7 @@ class Controller:
         default_nb_neighbors = 20
         default_std_ratio = 2.0
         return PipelineStage(
-            name="Filter Noise",
+            name=constants.PIPELINE_FILTER_NOISE,
             func=lambda **kwargs: self._pipeline_functions_wrapper(
                 pcd_tools.filter_noise,
                 **kwargs,
@@ -106,7 +95,7 @@ class Controller:
             )
 
         return PipelineStage(
-            name="Ground Segmentation",
+            name=constants.PIPELINE_GROUND_SEGMENTATION,
             func=lambda **kwargs: self._pipeline_functions_wrapper(
                 pcd_tools.segment_ground,
                 **kwargs,
@@ -127,7 +116,7 @@ class Controller:
         }
 
         return PipelineStage(
-            name="Ceiling Segmentation",
+            name=constants.PIPELINE_CEILING_SEGMENTATION,
             func=lambda **kwargs: self._pipeline_functions_wrapper(
                 pcd_tools.apply_ceiling_segmentation,
                 **kwargs,
@@ -146,7 +135,7 @@ class Controller:
         }
 
         return PipelineStage(
-            name="Wall Segmentation",
+            name=constants.PIPELINE_WALL_SEGMENTATION,
             func=lambda **kwargs: self._pipeline_functions_wrapper(
                 pcd_tools.apply_wall_segmentation,
                 **kwargs,
@@ -154,12 +143,12 @@ class Controller:
             params=params,
         )
 
-    def _make_post_wall_segmentation_noise_filter_stage(self) -> PipelineStage:
+    def _make_post_segmentation_noise_filter_stage(self) -> PipelineStage:
         # Reuse the same defaults as the initial noise filter.
         default_nb_neighbors = 20
         default_std_ratio = 2.0
         return PipelineStage(
-            name="Post-wall Noise Filter",
+            name=constants.PIPELINE_POST_SEGMENTATION_NOISE_FILTER,
             func=lambda **kwargs: self._pipeline_functions_wrapper(
                 pcd_tools.filter_noise_for_none_classified_points,
                 **kwargs,
@@ -183,7 +172,7 @@ class Controller:
             "enable_vlm": False,
         }
         return PipelineStage(
-            name="Objects Segmentation",
+            name=constants.PIPELINE_OBJECTS_SEGMENTATION,
             func=lambda **kwargs: self._pipeline_functions_wrapper(
                 pcd_tools.segment_objects,
                 **kwargs,
@@ -296,13 +285,13 @@ class Controller:
             name = entry.get("name")
             if not name or not isinstance(name, str):
                 raise ValueError(f"Each enabled stage must have a non-empty string 'name': {entry!r}")
-            if name not in KNOWN_PROCESS_STAGE_NAMES:
+            if name not in constants.KNOWN_PROCESS_STAGE_NAMES:
                 raise ValueError(
                     f"Unknown pipeline stage name {name!r}. "
-                    f"Supported names: {sorted(KNOWN_PROCESS_STAGE_NAMES)}"
+                    f"Supported names: {sorted(constants.KNOWN_PROCESS_STAGE_NAMES)}"
                 )
             params = dict(entry.get("params") or {})
-            if name == "Objects Segmentation":
+            if name == constants.PIPELINE_OBJECTS_SEGMENTATION:
                 params = self._merge_objects_segmentation_pipeline_params(params)
 
             placeholder = PipelineStage(
@@ -343,17 +332,17 @@ class Controller:
         name = setup_stage.name
         params = dict(setup_stage.params)
 
-        if name == "Filter Noise":
+        if name == constants.PIPELINE_FILTER_NOISE:
             func = self._process_filter_noise_stage
-        elif name == "Ground Segmentation":
+        elif name == constants.PIPELINE_GROUND_SEGMENTATION:
             func = self._process_ground_segmentation_stage
-        elif name == "Ceiling Segmentation":
+        elif name == constants.PIPELINE_CEILING_SEGMENTATION:
             func = self._process_ceiling_segmentation_stage
-        elif name == "Wall Segmentation":
+        elif name == constants.PIPELINE_WALL_SEGMENTATION:
             func = self._process_wall_segmentation_stage
-        elif name == "Post-wall Noise Filter":
-            func = self._process_post_wall_noise_filter_stage
-        elif name == "Objects Segmentation":
+        elif name == constants.PIPELINE_POST_SEGMENTATION_NOISE_FILTER:
+            func = self._process_post_segmentation_noise_filter_stage
+        elif name == constants.PIPELINE_OBJECTS_SEGMENTATION:
             func = self._process_objects_segmentation_stage
         else:
             # Fallback: reuse the same callable, assuming it accepts
@@ -387,7 +376,7 @@ class Controller:
             **kwargs
         )
 
-    def _process_post_wall_noise_filter_stage(self, pcd, points_attributes, **kwargs):
+    def _process_post_segmentation_noise_filter_stage(self, pcd, points_attributes, **kwargs):
         return pcd_tools.filter_noise_for_none_classified_points(
             pcd,
             points_attributes,
@@ -425,7 +414,7 @@ class Controller:
         for index, pcd, points_attributes in self.las_wrapper.iter_input_chunks():
             for stage in self.process_pipeline.stages:
                 stage_kwargs = dict(stage.params)
-                if stage.name == "Objects Segmentation":
+                if stage.name == constants.PIPELINE_OBJECTS_SEGMENTATION:
                     stage_kwargs["chunk_index"] = index
                 pcd, points_attributes = stage.func(
                     pcd=pcd,

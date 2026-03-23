@@ -5,14 +5,15 @@ from .ground_segmentation import InputLayoutGroundSegmentation
 from .post_wall_noise_filter import InputLayoutFilterNoiseAfterWallSegmentation
 from .wall_segmentation import InputLayoutWallSegmentation
 from .objects_segmentation import InputLayoutObjectsSegmentation
+from modules.utils import constants
 
 _STAGE_NAME_TO_LAYOUT = {
-    "Filter Noise": InputLayoutFilterNoise,
-    "Ground Segmentation": InputLayoutGroundSegmentation,
-    "Ceiling Segmentation": InputLayoutCeilingSegmentation,
-    "Wall Segmentation": InputLayoutWallSegmentation,
-    "Post-wall Noise Filter": InputLayoutFilterNoiseAfterWallSegmentation,
-    "Objects Segmentation": InputLayoutObjectsSegmentation,
+    constants.PIPELINE_FILTER_NOISE: InputLayoutFilterNoise,
+    constants.PIPELINE_GROUND_SEGMENTATION: InputLayoutGroundSegmentation,
+    constants.PIPELINE_CEILING_SEGMENTATION: InputLayoutCeilingSegmentation,
+    constants.PIPELINE_WALL_SEGMENTATION: InputLayoutWallSegmentation,
+    constants.PIPELINE_POST_SEGMENTATION_NOISE_FILTER: InputLayoutFilterNoiseAfterWallSegmentation,
+    constants.PIPELINE_OBJECTS_SEGMENTATION: InputLayoutObjectsSegmentation,
 }
 
 
