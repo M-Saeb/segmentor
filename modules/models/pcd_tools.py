@@ -172,6 +172,9 @@ def cloth_simulation_filter(points: np.ndarray, points_attributes, threshold_fac
         if max_change < 1e-3:
             break
 
+        if i == (max_iter - 1):
+            log.warning("Cloth filter reached the maximum number of iterations: %d", max_iter)
+
     # classify ground: points close to cloth surface are ground
     cloth_lin = cloth.reshape(-1)
     point_cloth_z = cloth_lin[lin_idx]
