@@ -40,6 +40,13 @@ def _parse_ai_label_from_response(text: str) -> str:
         line = line[:80] + "..."
     return line or "unknown"
 
+def _map_ai_label_to_classification(ai_label: str) -> int:
+    if ai_label == "car":
+        return constants.PCB_CLASSIFICATION_CAR
+    elif ai_label == "empty" or ai_label == "unknown":
+        return constants.PCB_CLASSIFICATION_INIT
+    else:
+        return constants.PCB_CLASSIFICATION_OTHER_OBJECTS
 
 def identify_object_from_views(
     front_path: str,
@@ -53,14 +60,18 @@ def identify_object_from_views(
     Send front/back isometric PNGs to Ollama and return a record for the YAML registry.
     """
     prompt = (
-        "You see two isometric views (front and back) of a LiDAR point cloud region. "
-        "The scene is for a parking lot area with only the ground and the object we want to identify. "
+        "You see two isometric views (front and back) of a LiDAR point cloud region with a white background. "
+        "The scene is for a parking lot area with only the object we want to identify. "
         "Reply with a single JSON object only, no markdown, in this exact form:\n"
         '{"label": "<short English object type name>"}\n'
         "Examples of label: chair, table, car, person, tree, unknown."
-        "Some guidelines: "
-        '1. Some photos could be a piece of a wall, ground, pillars, or no actually identifiable object, name those  "empty"\n'
-        '2. only focus on the single object that is at the center of the photo, not the edges\n'
+        "Some guidelines:\n"
+        '1. Some photos could be a piece of a wall, ground, pillars, or no actually identifiable object, name those "empty"\n'
+        '2. Only focus on the single object that is at the center of the photo, not the edges\n'
+        '3. If you are not sure what the object is, name it "empty"\n'
+        '4. The identified object should be standing upright EX: if you see a pole, but it is side ways, name it "empty"\n'
+        '5. The colors of the identified object should make sense to its natural colors, EX: a "tree" without brown or green color should not be identified as a tree, instead put it as "unknown" '
+        '6. The identified object should make sense in the context of the place, EX: a "candy bar" does not belong in a parking lot, so it should be identified as "unknown"\n'
     )
 
     b64_front = _encode_image_b64(front_path)
@@ -93,7 +104,7 @@ def identify_object_from_views(
     return {
         "chunk_index": int(chunk_index),
         "cluster_id": int(cluster_id),
-        "classification": int(constants.PCB_CLASSIFICATION_OBJECTS),
+        "classification": _map_ai_label_to_classification(ai_label),
         "ai_label": ai_label,
         "raw_response": raw.strip(),
     }

@@ -27,6 +27,10 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from modules.models.las_wrapper import LasWrapper  # noqa: E402
+from modules.models.ai_object_detector import (  # noqa: E402
+    identify_object_from_views,
+    merge_identified_objects_record,
+)
 from modules.utils import config as config_module  # noqa: E402
 from modules.utils import constants  # noqa: E402
 from modules.utils import log_utils  # noqa: E402
@@ -34,6 +38,85 @@ from modules.utils import log_utils  # noqa: E402
 log = log_utils.get_dual_logger(__name__)
 
 _SKIP_DIMS = frozenset({"object_cluster_id"})
+
+
+def _mask_indices_for_object_vlm_view(
+    classification: np.ndarray,
+    object_cluster_id: np.ndarray,
+    cluster_id: int,
+) -> np.ndarray:
+    """Ground + selected object points only (same view policy as segment_objects)."""
+    classification = np.asarray(classification)
+    object_cluster_id = np.asarray(object_cluster_id, dtype=np.int32)
+    ground = classification == constants.PCB_CLASSIFICATION_GROUND
+    this_object = object_cluster_id == cluster_id
+    # return np.where(ground | this_object)[0]
+    return np.where(this_object)[0]
+
+
+def _apply_rgb_colors_to_pcd(
+    pcd: o3d.geometry.PointCloud,
+    points_attributes: dict[str, np.ndarray],
+) -> None:
+    """Set pcd.colors from LAS red/green/blue attributes."""
+    red = np.asarray(points_attributes.get("red"))
+    green = np.asarray(points_attributes.get("green"))
+    blue = np.asarray(points_attributes.get("blue"))
+    n = len(pcd.points)
+    if not (len(red) == len(green) == len(blue) == n):
+        raise ValueError("RGB attribute lengths do not match point count")
+    rgb = np.vstack((red, green, blue)).T.astype(float)
+    max_val = np.max(rgb)
+    if max_val > 0:
+        rgb /= max_val
+    pcd.colors = o3d.utility.Vector3dVector(rgb)
+
+
+def _take_isometric_screenshots(
+    pcd: o3d.geometry.PointCloud,
+    dir_name: str,
+    file_prefix: str,
+) -> tuple[str, str]:
+    """
+    Save front/back isometric PNGs and return paths:
+      (<dir>/<prefix>_front_isometric.png, <dir>/<prefix>_back_isometric.png)
+    """
+    os.makedirs(dir_name, exist_ok=True)
+    width, height = 640, 480
+    renderer = o3d.visualization.rendering.OffscreenRenderer(width, height)
+    mat = o3d.visualization.rendering.MaterialRecord()
+    mat.shader = "defaultUnlit"
+    renderer.scene.add_geometry("cloud", pcd, mat)
+
+    center = np.asarray(pcd.get_center(), dtype=float)
+    bounds = pcd.get_axis_aligned_bounding_box()
+    diag = float((bounds.get_max_bound() - bounds.get_min_bound()).max())
+    radius = max(1e-6, diag * 1.0)
+    up = [0.0, 0.0, 1.0]
+
+    elev = np.deg2rad(35.0)
+    z_off = radius * np.sin(elev)
+    horiz_r = radius * np.cos(elev)
+
+    views = {
+        "front_isometric": 225.0,
+        "back_isometric": 45.0,
+    }
+    out_paths: dict[str, str] = {}
+    for name, az_deg in views.items():
+        theta = np.deg2rad(az_deg)
+        x_off = horiz_r * np.cos(theta)
+        y_off = horiz_r * np.sin(theta)
+        eye = center + np.array([x_off, y_off, z_off], dtype=float)
+        renderer.setup_camera(60.0, center, eye, up)
+        img = renderer.render_to_image()
+        fname = f"{file_prefix}_{name}.png"
+        out_path = os.path.join(dir_name, fname)
+        o3d.io.write_image(out_path, img)
+        out_paths[name] = out_path
+        log.debug("Saved %s", out_path)
+
+    return out_paths["front_isometric"], out_paths["back_isometric"]
 
 
 def _merge_chunks(wrap: LasWrapper) -> tuple[np.ndarray, dict[str, np.ndarray]]:
@@ -96,7 +179,7 @@ def _apply_dbscan_object_clusters(
     xyz: np.ndarray,
     eps: float,
     min_points: int,
-) -> None:
+) -> dict[str, np.ndarray]:
     """Update ``merged_attrs['classification']`` in place for class-5 points."""
     if "classification" not in merged_attrs:
         raise KeyError("merged_attrs must contain 'classification'")
@@ -111,7 +194,10 @@ def _apply_dbscan_object_clusters(
     n_obj = int(np.sum(obj_mask))
     if n_obj == 0:
         log.info("No points with classification %d (objects); output unchanged.", constants.PCB_CLASSIFICATION_OBJECTS)
-        return
+        return {
+            "object_cluster_id": np.zeros(len(xyz), dtype=np.int32),
+            "cluster_ids": np.array([], dtype=np.int32),
+        }
 
     obj_indices = np.where(obj_mask)[0]
     subset = o3d.geometry.PointCloud()
@@ -139,6 +225,7 @@ def _apply_dbscan_object_clusters(
     start = constants.PCB_CLASSIFICATION_OBJECTS_CLUSTER_START
     max_class = 30
     class_span = max_class - start + 1  # 25 values: 6..30
+    object_cluster_id = np.zeros(len(xyz), dtype=np.int32)
     for j, gidx in enumerate(obj_indices):
         lab = int(labels[j])
         if lab < 0:
@@ -146,8 +233,93 @@ def _apply_dbscan_object_clusters(
         s = raw_to_seq[lab]
         wrapped_class = start + ((s - 1) % class_span)
         classification_attr[gidx] = wrapped_class
+        object_cluster_id[gidx] = int(s)
 
     merged_attrs["classification"] = classification_attr.astype(orig_dtype, copy=False)
+    return {
+        "object_cluster_id": object_cluster_id,
+        "cluster_ids": np.asarray(sorted(raw_to_seq.values()), dtype=np.int32),
+    }
+
+
+def _run_object_vlm_post_processing(
+    merged_attrs: dict[str, np.ndarray],
+    xyz: np.ndarray,
+    object_cluster_id: np.ndarray,
+    cluster_ids: np.ndarray,
+    output_folder_path: str,
+    ollama_model: str = "gemma3:4b",
+) -> None:
+    """Per-cluster screenshots + VLM classification + YAML merge."""
+    if len(cluster_ids) == 0:
+        return
+    os.makedirs(output_folder_path, exist_ok=True)
+    traces_dir = os.path.join(output_folder_path, "vlm_object_traces")
+    os.makedirs(traces_dir, exist_ok=True)
+
+    pcd_all = o3d.geometry.PointCloud()
+    pcd_all.points = o3d.utility.Vector3dVector(xyz)
+    cls_arr = np.asarray(merged_attrs["classification"])
+    npt = len(cls_arr)
+
+    for cid in cluster_ids:
+        cid = int(cid)
+        try:
+            indices = _mask_indices_for_object_vlm_view(cls_arr, object_cluster_id, cid)
+            if len(indices) == 0:
+                log.warning("Object VLM post-processing: empty view for cluster %s; skipping", cid)
+                continue
+
+            view_pcd = pcd_all.select_by_index(indices)
+            view_attrs: dict[str, np.ndarray] = {}
+            for k, v in merged_attrs.items():
+                arr = np.asarray(v)
+                if arr.shape[0] == npt:
+                    view_attrs[k] = arr[indices]
+                else:
+                    view_attrs[k] = v
+
+            try:
+                _apply_rgb_colors_to_pcd(view_pcd, view_attrs)
+            except ValueError as ex:
+                log.warning(
+                    "Object VLM post-processing: RGB unavailable for cluster %s (%s); skipping.",
+                    cid,
+                    ex,
+                )
+                continue
+
+            prefix = f"pp_{cid:05d}"
+
+            front_path, back_path = _take_isometric_screenshots(view_pcd, traces_dir, prefix)
+            try:
+                record = identify_object_from_views(
+                    front_path,
+                    back_path,
+                    cluster_id=cid,
+                    chunk_index=0,
+                    ollama_model=ollama_model,
+                )
+                log.info("VLM: identified %s as %s", cid, record["ai_label"])
+                predicted_class = record["classification"]
+                cluster_point_mask = object_cluster_id == cid
+                if np.any(cluster_point_mask):
+                    merged_attrs["classification"][cluster_point_mask] = predicted_class
+                merge_identified_objects_record(output_folder_path, record)
+            except Exception as ex:
+                log.warning(
+                    "Object VLM post-processing: VLM/YAML failed for cluster %s: %s",
+                    cid,
+                    ex,
+                    exc_info=True,
+                )
+        except Exception as ex:
+            log.warning(
+                "Object VLM post-processing failed for cluster %s: %s",
+                cid,
+                ex,
+                exc_info=True,
+            )
 
 
 def main() -> int:
@@ -204,10 +376,26 @@ def main() -> int:
     xyz, merged_attrs = _merge_chunks(wrap)
 
     try:
-        _apply_dbscan_object_clusters(merged_attrs, xyz, eps=eps, min_points=min_points)
+        dbscan_meta = _apply_dbscan_object_clusters(merged_attrs, xyz, eps=eps, min_points=min_points)
     except KeyError as e:
         print(f"Missing required attribute: {e}", file=sys.stderr)
         return 1
+
+    result_cfg = getattr(cfg, "result", {}) or {}
+    output_folder_path = str(result_cfg.get("output_folder_path", "")).strip()
+    if output_folder_path:
+        _run_object_vlm_post_processing(
+            merged_attrs=merged_attrs,
+            xyz=xyz,
+            object_cluster_id=np.asarray(dbscan_meta["object_cluster_id"], dtype=np.int32),
+            cluster_ids=np.asarray(dbscan_meta["cluster_ids"], dtype=np.int32),
+            output_folder_path=output_folder_path,
+            ollama_model="gemma3:4b",
+        )
+    else:
+        log.warning(
+            "result.output_folder_path is not set in config; skipping VLM screenshots/YAML."
+        )
 
     _write_las(wrap, output_path, xyz, merged_attrs)
     print(f"Wrote {len(xyz):,} points to {output_path}")
