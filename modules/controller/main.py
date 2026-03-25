@@ -32,14 +32,11 @@ class Controller:
         chunk.
 
         The setup pipeline operates on a single preview chunk, allowing the user
-        to tune parameters stage-by-stage (noise filter, ground/ceiling/wall
+        to tune parameters stage-by-stage (ground/ceiling/wall
         segmentation, object clustering, etc.). Its structure is later cloned into a "process"
         pipeline that is applied to every chunk of the input file.
         """
         new_pipeline = Pipeline(kind="setup")
-
-        if getattr(self.config, "filter_noise", False):
-            new_pipeline.stages.append(self._make_filter_noise_stage())
 
         ground_cfg = getattr(self.config, "ground_segmentation", {})
         if ground_cfg.get("enable", False):
@@ -63,22 +60,6 @@ class Controller:
             raise ValueError("No stages for the setup pipeline were created")
 
         return new_pipeline
-
-    def _make_filter_noise_stage(self) -> PipelineStage:
-        # Defaults chosen for interactive preview; can be adjusted via GUI.
-        default_nb_neighbors = 20
-        default_std_ratio = 2.0
-        return PipelineStage(
-            name=constants.PIPELINE_FILTER_NOISE,
-            func=lambda **kwargs: self._pipeline_functions_wrapper(
-                pcd_tools.filter_noise,
-                **kwargs,
-            ),
-            params={
-                "nb_neighbors": default_nb_neighbors,
-                "std_ratio": default_std_ratio,
-            },
-        )
 
     def _make_ground_segmentation_stage(self) -> PipelineStage:
         ground_cfg = getattr(self.config, "ground_segmentation", {})
@@ -334,9 +315,7 @@ class Controller:
         name = setup_stage.name
         params = dict(setup_stage.params)
 
-        if name == constants.PIPELINE_FILTER_NOISE:
-            func = self._process_filter_noise_stage
-        elif name == constants.PIPELINE_GROUND_SEGMENTATION:
+        if name == constants.PIPELINE_GROUND_SEGMENTATION:
             func = self._process_ground_segmentation_stage
         elif name == constants.PIPELINE_CEILING_SEGMENTATION:
             func = self._process_ceiling_segmentation_stage
@@ -353,9 +332,6 @@ class Controller:
             func = setup_stage.func
 
         return PipelineStage(name=name, func=func, params=params, enabled=True)
-
-    def _process_filter_noise_stage(self, pcd, points_attributes, **kwargs):
-        return pcd_tools.filter_noise(pcd, points_attributes, **kwargs)
 
     def _process_ground_segmentation_stage(self, pcd, points_attributes, **kwargs):
         return pcd_tools.segment_ground(

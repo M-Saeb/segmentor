@@ -1,4 +1,3 @@
-from .base import InputLayout
 from .filter_noise import BaseNoiseFilterLayout
 
 

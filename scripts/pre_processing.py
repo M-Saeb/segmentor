@@ -374,11 +374,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--sort-mode",
-        choices=("lex", "spatial-xy", "uniform-xy", "kd-tree"),
-        default="kd-tree",
+        choices=("lex", "spatial-xy", "uniform-xy", "kd-tree", "none"),
+        default="none",
         help=(
             "lex=XYZ sweep; spatial-xy=adaptive quadtree on XY; "
-            "uniform-xy=fixed grid; kd-tree=Open3D KDTreeFlann nearest-seed binning (default: kd-tree)"
+            "uniform-xy=fixed grid; kd-tree=Open3D KDTreeFlann nearest-seed binning; none=no sorting (default: kd-tree)"
         ),
     )
     parser.add_argument(
@@ -402,6 +402,12 @@ def main() -> int:
         default=0.0,
         metavar="M",
         help="Stop subdividing when tile edge lengths are at or below this (meters; spatial-xy and kd-tree; 0=disabled).",
+    )
+    parser.add_argument(
+        "--filter-noise",
+        action="store_true",
+        default=False,
+        help="Remove statistical outliers (Open3D) (default: True).",
     )
     parser.add_argument(
         "--nb-neighbors",
@@ -456,13 +462,17 @@ def main() -> int:
     log.info("Initial point count: %d", len(pcd.points))
 
     # 2) Remove Statistical outliers (Open3D) while keeping attributes aligned.
-    pcd, merged_attrs = pcd_tools.filter_noise(
-        pcd,
-        merged_attrs,
-        nb_neighbors=args.nb_neighbors,
-        std_ratio=args.std_ratio,
-    )
-    log.info("After statistical outlier removal: %d", len(pcd.points))
+    if args.filter_noise:
+        pcd, merged_attrs = pcd_tools.filter_noise(
+            pcd,
+            merged_attrs,
+            nb_neighbors=args.nb_neighbors,
+            std_ratio=args.std_ratio,
+        )
+        log.info("After statistical outlier removal: %d", len(pcd.points))
+    else:
+        log.info("Skipping statistical outlier removal")
+
 
     # 3) Voxel downsampling (Open3D), preserving LAS attributes by nearest neighbor.
     pcd, merged_attrs = _voxel_downsample_preserve_attributes(
@@ -498,9 +508,13 @@ def main() -> int:
         )
         label = f"kd-tree indexing (target ~{target} pts/leaf)"
 
-    xyz = xyz[order]
-    for dim in list(merged_attrs.keys()):
-        merged_attrs[dim] = merged_attrs[dim][order]
+    if sort_mode != "none":
+        log.debug("Sorting with %s", sort_mode)
+        xyz = xyz[order]
+        for dim in list(merged_attrs.keys()):
+            merged_attrs[dim] = merged_attrs[dim][order]
+    else:
+        log.info("Skipping sorting")
 
     _write_las(
         wrap,

@@ -1,6 +1,5 @@
 from .base import DefaultInputLayout, InputLayout
 from .ceiling_segmentation import InputLayoutCeilingSegmentation
-from .filter_noise import InputLayoutFilterNoise
 from .ground_segmentation import InputLayoutGroundSegmentation
 from .post_wall_noise_filter import InputLayoutFilterNoiseAfterWallSegmentation
 from .wall_segmentation import InputLayoutWallSegmentation
@@ -8,7 +7,6 @@ from .objects_segmentation import InputLayoutObjectsSegmentation
 from modules.utils import constants
 
 _STAGE_NAME_TO_LAYOUT = {
-    constants.PIPELINE_FILTER_NOISE: InputLayoutFilterNoise,
     constants.PIPELINE_GROUND_SEGMENTATION: InputLayoutGroundSegmentation,
     constants.PIPELINE_CEILING_SEGMENTATION: InputLayoutCeilingSegmentation,
     constants.PIPELINE_WALL_SEGMENTATION: InputLayoutWallSegmentation,
@@ -29,7 +27,6 @@ def create_input_layout_for_stage(em: float, stage_name: str) -> InputLayout:
 __all__ = [
     "InputLayout",
     "DefaultInputLayout",
-    "InputLayoutFilterNoise",
     "InputLayoutGroundSegmentation",
     "InputLayoutCeilingSegmentation",
     "InputLayoutWallSegmentation",
