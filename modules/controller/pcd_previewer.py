@@ -13,19 +13,19 @@ class PCDPreviewer:
     def apply_compression(self, max_points=100_000):
         num_points = len(self.pcd.points)
         if num_points == 0:
-            log.info("apply_compress: point cloud is empty; nothing to compress.")
+            log.warning("apply_compress: point cloud is empty; nothing to compress.")
             return
 
         # Target maximum number of points for interactive viewing.
         if num_points <= max_points:
-            log.info(
+            log.debug(
                 "apply_compress: %d points <= max_points (%d); skipping compression.",
                 num_points,
                 max_points,
             )
             return
 
-        log.info(
+        log.debug(
             "apply_compress: downsampling from %d to %d points for display.",
             num_points,
             max_points,

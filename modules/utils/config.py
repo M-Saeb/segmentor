@@ -27,8 +27,12 @@ class SegmentorConfig:
             "threshold_factor": 0.1,
             "resolution": 1.0,
             "rigidness": 3,
-            "max_iter": 500
-        }
+            "max_iter": 500,
+        },
+        "ransac_params": {
+            "distance_threshold": 0.05,
+            "num_iterations": 1000,
+        },
     }
     ceiling_segmentation: dict = {
         "enable": False,
@@ -92,6 +96,25 @@ class SegmentorConfig:
             raise ValueError(
                 "Invalid ceiling_segmentation height configuration: "
                 f"min_height_above_ground={min_h}, max_height_above_ground={max_h}"
+            )
+
+        ground_cfg = config_data.get("ground_segmentation", self.ground_segmentation)
+        ground_method = ground_cfg.get("method", "basic")
+        allowed_ground = ("basic", "csf", "ransac")
+        if ground_method not in allowed_ground:
+            raise ValueError(
+                f"ground_segmentation.method must be one of {allowed_ground}, got {ground_method!r}"
+            )
+        ransac_cfg = ground_cfg.get("ransac_params", self.ground_segmentation["ransac_params"])
+        dt = ransac_cfg.get("distance_threshold", 0.05)
+        ni = ransac_cfg.get("num_iterations", 1000)
+        if dt <= 0:
+            raise ValueError(
+                f"ground_segmentation.ransac_params.distance_threshold must be positive, got {dt}"
+            )
+        if ni < 1:
+            raise ValueError(
+                f"ground_segmentation.ransac_params.num_iterations must be >= 1, got {ni}"
             )
 
         obj_cfg = config_data.get("objects_segmentation", self.objects_segmentation)

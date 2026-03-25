@@ -11,12 +11,16 @@ filter_noise: true
 
 ground_segmentation:
   enable: true
-  method: csf # basic or csf
-  csf_params: # only for csf method
+  # method: basic | csf | ransac
+  method: ransac
+  csf_params: # used when method is csf
     threshold_factor: 0.1
     resolution: 3
     rigidness: 3
     max_iter: 500
+  ransac_params: # used when method is ransac
+    distance_threshold: 0.05
+    num_iterations: 1000
 
 ceiling_segmentation:
   enable: true

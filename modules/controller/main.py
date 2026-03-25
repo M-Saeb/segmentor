@@ -65,6 +65,7 @@ class Controller:
         ground_cfg = getattr(self.config, "ground_segmentation", {})
         method = ground_cfg.get("method", "basic")
         csf_cfg = ground_cfg.get("csf_params", {})
+        ransac_cfg = ground_cfg.get("ransac_params", {})
 
         params: Dict[str, object] = {"method": method}
         if method == "csf":
@@ -74,6 +75,13 @@ class Controller:
                     "resolution": csf_cfg.get("resolution", 1.0),
                     "rigidness": csf_cfg.get("rigidness", 3),
                     "max_iter": csf_cfg.get("max_iter", 500),
+                }
+            )
+        elif method == "ransac":
+            params.update(
+                {
+                    "distance_threshold": ransac_cfg.get("distance_threshold", 0.05),
+                    "num_iterations": int(ransac_cfg.get("num_iterations", 1000)),
                 }
             )
 

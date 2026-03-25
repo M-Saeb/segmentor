@@ -191,6 +191,90 @@ def cloth_simulation_filter(points: np.ndarray, points_attributes, threshold_fac
     
     return points_attributes
 
+
+# Max deviation from horizontal (Z-up) for accepting the RANSAC plane as floor; not exposed as API.
+_RANSAC_FLOOR_MAX_TILT_FROM_HORIZONTAL_DEG = 10.0
+
+
+def ransac_floor_segmentation(
+    points: np.ndarray,
+    points_attributes,
+    distance_threshold: float,
+    num_iterations: int,
+):
+    """
+    Segment ground by fitting one dominant plane with RANSAC. If the plane is
+    approximately horizontal, inliers are classified as ground.
+
+    Args:
+        points: (N, 3) point coordinates.
+        points_attributes: Must include ``classification`` aligned with ``points``.
+        distance_threshold: Inlier distance to plane (Open3D ``segment_plane``).
+        num_iterations: RANSAC iterations (``ransac_n`` is fixed at 3).
+
+    Returns:
+        Updated ``points_attributes``. Classification is unchanged if the plane
+        is not horizontal enough.
+    """
+    log.debug(
+        "RANSAC floor segmentation (distance_threshold=%.4f, num_iterations=%d)...",
+        distance_threshold,
+        num_iterations,
+    )
+    if not isinstance(points, np.ndarray):
+        raise TypeError("points must be a numpy.ndarray of shape (N,3)")
+    if points.ndim != 2 or points.shape[1] < 3:
+        raise ValueError("points must have shape (N,3)")
+    if "classification" not in points_attributes:
+        raise KeyError("points_attributes must contain 'classification'")
+
+    classification = np.asarray(points_attributes["classification"])
+    if classification.shape[0] != points.shape[0]:
+        raise ValueError(
+            "length of points_attributes['classification'] does not match number of points"
+        )
+
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+
+    plane_model, inliers = pcd.segment_plane(
+        distance_threshold=distance_threshold,
+        ransac_n=3,
+        num_iterations=num_iterations,
+    )
+
+    a, b, c, d = plane_model
+    normal = np.array([a, b, c], dtype=float)
+    norm_len = np.linalg.norm(normal)
+    if norm_len < 1e-12:
+        log.warning("RANSAC floor: degenerate plane normal; ground classification unchanged.")
+        return points_attributes
+    normal = normal / norm_len
+
+    angle_from_horizontal = float(
+        np.degrees(np.arccos(np.clip(np.abs(normal[2]), -1.0, 1.0)))
+    )
+    if angle_from_horizontal > _RANSAC_FLOOR_MAX_TILT_FROM_HORIZONTAL_DEG:
+        log.warning(
+            "RANSAC floor: dominant plane is not horizontal enough (%.2f° > %.1f°); "
+            "ground classification unchanged.",
+            angle_from_horizontal,
+            _RANSAC_FLOOR_MAX_TILT_FROM_HORIZONTAL_DEG,
+        )
+        return points_attributes
+
+    inliers_arr = np.asarray(inliers, dtype=np.int64)
+    classification = classification.copy()
+    classification[inliers_arr] = constants.PCB_CLASSIFICATION_GROUND
+    points_attributes["classification"] = classification
+    log.info(
+        "RANSAC floor: labeled %d points as ground (angle from horizontal: %.2f°).",
+        len(inliers_arr),
+        angle_from_horizontal,
+    )
+    return points_attributes
+
+
 def segment_ground(
     pcd,
     points_attributes,
@@ -199,6 +283,8 @@ def segment_ground(
     resolution=None,
     rigidness=None,
     max_iter=None,
+    distance_threshold=None,
+    num_iterations=None,
 ):
     """
     Segment ground/non-ground with optional parameter overrides.
@@ -219,6 +305,17 @@ def segment_ground(
             resolution=resolution,
             rigidness=rigidness,
             max_iter=max_iter,
+        )
+    elif method == "ransac":
+        if distance_threshold is None:
+            distance_threshold = 0.05
+        if num_iterations is None:
+            num_iterations = 1000
+        points_attributes = ransac_floor_segmentation(
+            np.asarray(pcd.points),
+            points_attributes,
+            distance_threshold=distance_threshold,
+            num_iterations=num_iterations,
         )
     else:
         log.error("Unknown ground filter method: %s", method)
