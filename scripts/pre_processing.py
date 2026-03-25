@@ -5,8 +5,9 @@ when read in fixed-size chunks.
 
 Modes:
   - lex: lexicographic (X, then Y, then Z) — can look like long thin strips per chunk.
-  - spatial-xy: adaptive XY quadtree leaves, then Z within each leaf (default).
+  - spatial-xy: adaptive XY quadtree leaves, then Z within each leaf.
   - uniform-xy: uniform XY grid sized from bbox and target points per cell.
+  - kd-tree: Open3D `KDTreeFlann` nearest-seed binning, then Z within each bin (default).
 
 Reads via LasWrapper chunk iteration, merges in memory, sorts once, writes using the
 wrapper's header helper.
@@ -31,12 +32,14 @@ from pathlib import Path
 import laspy
 from laspy.vlrs import VLR
 import numpy as np
+import open3d as o3d
 
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from modules.models.las_wrapper import LasWrapper  # noqa: E402
+from modules.models import pcd_tools  # noqa: E402
 from modules.utils import config as config_module  # noqa: E402
 from modules.utils import log_utils  # noqa: E402
 
@@ -46,7 +49,7 @@ log = log_utils.get_dual_logger(__name__)
 _SKIP_DIMS = frozenset({"object_cluster_id"})
 
 
-def _merge_chunks(wrap: LasWrapper) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+def _merge_chunks(wrap: LasWrapper) -> tuple[o3d.geometry.PointCloud, dict[str, np.ndarray]]:
     xyz_parts: list[np.ndarray] = []
     attr_parts: dict[str, list[np.ndarray]] = {}
 
@@ -64,7 +67,9 @@ def _merge_chunks(wrap: LasWrapper) -> tuple[np.ndarray, dict[str, np.ndarray]]:
     merged_attrs: dict[str, np.ndarray] = {
         dim: np.concatenate(chunks, axis=0) for dim, chunks in attr_parts.items()
     }
-    return xyz, merged_attrs
+    merged_pcd = o3d.geometry.PointCloud()
+    merged_pcd.points = o3d.utility.Vector3dVector(xyz)
+    return merged_pcd, merged_attrs
 
 
 def _lexsort_xyz(xyz: np.ndarray) -> np.ndarray:
@@ -182,6 +187,121 @@ def _order_uniform_xy(xyz: np.ndarray, target_points: int) -> np.ndarray:
     return np.lexsort((z, cell_id))
 
 
+def _voxel_downsample_preserve_attributes(
+    pcd: o3d.geometry.PointCloud,
+    points_attributes: dict[str, np.ndarray],
+    voxel_size: float,
+) -> tuple[o3d.geometry.PointCloud, dict[str, np.ndarray]]:
+    """Downsample `pcd` with Open3D voxel filter, preserving per-point attributes.
+
+    Open3D's voxel downsampling produces new points (voxel centroids). We map each
+    downsampled point to the nearest original point (KD-tree, k=1) and copy that
+    point's LAS attributes.
+    """
+    if voxel_size <= 0:
+        raise ValueError("voxel_size must be positive.")
+
+    n_in = len(pcd.points)
+    if n_in == 0:
+        # Preserve attribute keys/empties consistently.
+        empty_pcd = o3d.geometry.PointCloud()
+        empty_pcd.points = o3d.utility.Vector3dVector(
+            np.empty((0, 3), dtype=np.float64)
+        )
+        new_attrs = {
+            dim: np.asarray(arr)[:0] for dim, arr in points_attributes.items()
+        }
+        return empty_pcd, new_attrs
+
+    log.info("Voxel downsampling with voxel_size=%s", voxel_size)
+    down_pcd = pcd.voxel_down_sample(voxel_size=voxel_size)
+
+    n_out = len(down_pcd.points)
+    if n_out == 0:
+        empty_pcd = o3d.geometry.PointCloud()
+        empty_pcd.points = o3d.utility.Vector3dVector(
+            np.empty((0, 3), dtype=np.float64)
+        )
+        new_attrs = {
+            dim: np.asarray(arr)[:0] for dim, arr in points_attributes.items()
+        }
+        return empty_pcd, new_attrs
+
+    # Map downsampled centroids to nearest original point indices.
+    tree = o3d.geometry.KDTreeFlann(pcd)
+    down_points = np.asarray(down_pcd.points)
+    nn_indices = np.empty(n_out, dtype=np.int64)
+    for i in range(n_out):
+        pt = down_points[i]
+        _, ind, _ = tree.search_knn_vector_3d(pt, 1)
+        nn_indices[i] = int(ind[0])
+
+    new_attrs: dict[str, np.ndarray] = {}
+    for dim, arr in points_attributes.items():
+        arr_np = np.asarray(arr)
+        if arr_np.shape[0] == n_in:
+            new_attrs[dim] = arr_np[nn_indices]
+        else:
+            # Attributes not per-point are kept as-is.
+            new_attrs[dim] = arr
+
+    return down_pcd, new_attrs
+
+
+def _order_kdtree_index(
+    xyz: np.ndarray,
+    target_points: int,
+    max_depth: int,
+    min_tile_meters: float,
+) -> np.ndarray:
+    """Sort using Open3D KD-tree nearest-seed indexing, then Z within each bin. """
+    n = len(xyz)
+    if n == 0:
+        return np.array([], dtype=np.int64)
+    if target_points <= 0:
+        raise ValueError("target_points must be positive.")
+
+    # Early stop: if the whole cloud is already within the min tile size.
+    if min_tile_meters > 0.0:
+        return xyz
+
+    # # Determine how many seed bins to use.
+    # n_seeds = int(np.ceil(n / float(target_points)))
+    # n_seeds = max(1, n_seeds)
+
+    # # Use max_depth to cap number of bins (2**depth), but keep it bounded for safety.
+    # if max_depth > 0:
+    #     capped_depth = min(int(max_depth), 20)  # 2**20 ~ 1M bins max
+    #     max_seeds = 1 << capped_depth
+    #     n_seeds = min(n_seeds, max_seeds)
+
+    # if n_seeds <= 1:
+    #     # With 1 bin, sorting by Z alone is a bit arbitrary; use lexsort for determinism.
+    #     return _lexsort_xyz(xyz)
+
+    # # Deterministic seed selection: take lexicographically smallest points spread out.
+    # lex_order = _lexsort_xyz(xyz)
+    # step = max(1, n // n_seeds)
+    # seed_indices = lex_order[::step][:n_seeds]
+    # seeds = xyz[seed_indices]
+
+    # Assign each point to its nearest seed using Open3D KD-tree indexing.
+    seed_pcd = o3d.geometry.PointCloud()
+    seed_pcd.points = o3d.utility.Vector3dVector(xyz)
+    seed_tree = o3d.geometry.KDTreeFlann(seed_pcd)
+
+    bin_ids = np.empty(n, dtype=np.int64)
+    for i in range(n):
+        # `search_knn_vector_3d` expects a plain tuple/list-like [x,y,z].
+        _, ind, _ = seed_tree.search_knn_vector_3d(
+            xyz[i].astype(np.float64, copy=False), 1
+        )
+        bin_ids[i] = int(ind[0])
+
+    z = xyz[:, 2]
+    return np.lexsort((z, bin_ids))
+
+
 def _write_las(
     wrap: LasWrapper,
     output_path: str,
@@ -254,9 +374,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--sort-mode",
-        choices=("lex", "spatial-xy", "uniform-xy"),
-        default="spatial-xy",
-        help="lex=XYZ sweep; spatial-xy=adaptive quadtree on XY; uniform-xy=fixed grid (default: spatial-xy)",
+        choices=("lex", "spatial-xy", "uniform-xy", "kd-tree"),
+        default="kd-tree",
+        help=(
+            "lex=XYZ sweep; spatial-xy=adaptive quadtree on XY; "
+            "uniform-xy=fixed grid; kd-tree=Open3D KDTreeFlann nearest-seed binning (default: kd-tree)"
+        ),
     )
     parser.add_argument(
         "--target-points-per-tile",
@@ -271,14 +394,35 @@ def main() -> int:
         type=int,
         default=64,
         metavar="D",
-        help="Safety cap on quadtree recursion depth (spatial-xy only).",
+        help="Safety cap on partition depth (spatial-xy uses it directly; kd-tree uses it to cap seed bins).",
     )
     parser.add_argument(
         "--min-tile-meters",
         type=float,
         default=0.0,
         metavar="M",
-        help="Stop subdividing when both XY edge lengths are at or below this (meters; spatial-xy only; 0=disabled).",
+        help="Stop subdividing when tile edge lengths are at or below this (meters; spatial-xy and kd-tree; 0=disabled).",
+    )
+    parser.add_argument(
+        "--nb-neighbors",
+        type=int,
+        default=20,
+        metavar="K",
+        help="Statistical outlier removal: nb_neighbors (default: 20).",
+    )
+    parser.add_argument(
+        "--std-ratio",
+        type=float,
+        default=2.0,
+        metavar="R",
+        help="Statistical outlier removal: std_ratio (default: 2.0).",
+    )
+    parser.add_argument(
+        "--voxel-size",
+        type=float,
+        default=0.1,
+        metavar="S",
+        help="Voxel downsampling size passed to Open3D (default: 0.1).",
     )
     parser.add_argument(
         "--no-segmentor-vlr",
@@ -308,7 +452,27 @@ def main() -> int:
 
     wrap = LasWrapper(cfg, auto_read_input_file=False)
 
-    xyz, merged_attrs = _merge_chunks(wrap)
+    pcd, merged_attrs = _merge_chunks(wrap)
+    log.info("Initial point count: %d", len(pcd.points))
+
+    # 2) Remove Statistical outliers (Open3D) while keeping attributes aligned.
+    pcd, merged_attrs = pcd_tools.filter_noise(
+        pcd,
+        merged_attrs,
+        nb_neighbors=args.nb_neighbors,
+        std_ratio=args.std_ratio,
+    )
+    log.info("After statistical outlier removal: %d", len(pcd.points))
+
+    # 3) Voxel downsampling (Open3D), preserving LAS attributes by nearest neighbor.
+    pcd, merged_attrs = _voxel_downsample_preserve_attributes(
+        pcd,
+        merged_attrs,
+        voxel_size=args.voxel_size,
+    )
+    log.info("After voxel downsampling: %d", len(pcd.points))
+
+    xyz = np.asarray(pcd.points)
 
     sort_mode = args.sort_mode
     if sort_mode == "lex":
@@ -317,7 +481,7 @@ def main() -> int:
     elif sort_mode == "uniform-xy":
         order = _order_uniform_xy(xyz, target)
         label = f"uniform XY (target ~{target} pts/tile)"
-    else:
+    elif sort_mode == "spatial-xy":
         order = _order_spatial_xy_quadtree(
             xyz,
             target_points=target,
@@ -325,6 +489,14 @@ def main() -> int:
             min_tile_meters=args.min_tile_meters,
         )
         label = f"spatial XY quadtree (target ~{target} pts/leaf)"
+    else:
+        order = _order_kdtree_index(
+            xyz,
+            target_points=target,
+            max_depth=args.max_quadtree_depth,
+            min_tile_meters=args.min_tile_meters,
+        )
+        label = f"kd-tree indexing (target ~{target} pts/leaf)"
 
     xyz = xyz[order]
     for dim in list(merged_attrs.keys()):

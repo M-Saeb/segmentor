@@ -1,4 +1,4 @@
-from typing import Dict, FrozenSet
+from typing import Dict
 
 from modules.utils.config import SegmentorConfig
 from modules.utils.pipeline import PipelineStage, Pipeline
