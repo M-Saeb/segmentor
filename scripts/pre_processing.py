@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Reorder LAS/LAZ points for better spatial locality when read in fixed-size chunks.
+Pre-process LAS/LAZ data by reordering (sorting) points for better spatial locality
+when read in fixed-size chunks.
 
 Modes:
   - lex: lexicographic (X, then Y, then Z) — can look like long thin strips per chunk.
@@ -15,8 +16,8 @@ Outputs a Segmentor VLR (JSON: ``segmentor_is_sorted``, ``sort_mode``) unless
 
 Run from the project root so `modules` imports resolve, e.g.:
 
-    python scripts/sort_las_global.py -i input.las -o sorted.las
-    python scripts/sort_las_global.py -i in.las -o out.las --mode lex
+    python scripts/pre_processing.py -i input.las -o preprocessed.las
+    python scripts/pre_processing.py -i in.las -o out.las --sort-mode lex
 """
 
 from __future__ import annotations
@@ -195,7 +196,8 @@ def _write_las(
     ``LasWrapper.initialize_output_file`` + ``write_pcb_chunk_to_file`` (append).
 
     Optionally embeds a JSON VLR (user_id ``Segmentor``, record_id ``65001``) with
-    ``segmentor_is_sorted`` and ``sort_mode`` for downstream detection.
+    ``segmentor_is_sorted`` and ``sort_mode`` to mark that this file was
+    pre-processed by reordering/sorting.
     """
     n = len(xyz)
     chunk_size = int(wrap.config.chunk_size)
@@ -212,7 +214,7 @@ def _write_las(
             VLR(
                 user_id="Segmentor",
                 record_id=65001,
-                description="segmentor_sort_metadata",
+                description="segmentor_preprocess_metadata",
                 record_data=payload,
             )
         )
@@ -240,7 +242,7 @@ def _write_las(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Reorder LAS points for chunk locality (spatial XY) or lexicographic XYZ."
+        description="Pre-processing of LAS file for better spatial locality."
     )
     parser.add_argument("--input", "-i", required=True, help="Input .las or .laz path")
     parser.add_argument("--output", "-o", required=True, help="Output .las path")
@@ -251,7 +253,7 @@ def main() -> int:
         help="YAML config path (chunk_size and LasWrapper settings come from here)",
     )
     parser.add_argument(
-        "--mode",
+        "--sort-mode",
         choices=("lex", "spatial-xy", "uniform-xy"),
         default="spatial-xy",
         help="lex=XYZ sweep; spatial-xy=adaptive quadtree on XY; uniform-xy=fixed grid (default: spatial-xy)",
@@ -281,7 +283,7 @@ def main() -> int:
     parser.add_argument(
         "--no-segmentor-vlr",
         action="store_true",
-        help="Do not write the Segmentor JSON metadata VLR (segmentor_is_sorted).",
+        help="Do not write the Segmentor preprocessing JSON metadata VLR (segmentor_is_sorted).",
     )
     args = parser.parse_args()
 
@@ -308,10 +310,11 @@ def main() -> int:
 
     xyz, merged_attrs = _merge_chunks(wrap)
 
-    if args.mode == "lex":
+    sort_mode = args.sort_mode
+    if sort_mode == "lex":
         order = _lexsort_xyz(xyz)
         label = "XYZ lexicographic"
-    elif args.mode == "uniform-xy":
+    elif sort_mode == "uniform-xy":
         order = _order_uniform_xy(xyz, target)
         label = f"uniform XY (target ~{target} pts/tile)"
     else:
@@ -332,7 +335,7 @@ def main() -> int:
         output_path,
         xyz,
         merged_attrs,
-        sort_mode=args.mode,
+        sort_mode=sort_mode,
         write_segmentor_vlr=not args.no_segmentor_vlr,
     )
 
