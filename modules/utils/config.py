@@ -36,11 +36,8 @@ class SegmentorConfig:
     }
     ceiling_segmentation: dict = {
         "enable": False,
-        "distance_threshold": 0.01,
-        "num_iterations": 1000,
-        "max_tilt_from_horizontal_deg": 10.0,
-        "min_height_above_ground": 2.0,
-        "max_height_above_ground": 10.0,
+        "facing_up_threshold": 0.95,
+        "min_inlier_density": 15,
     }
     wall_segmentation: dict = {
         "enable": False,
@@ -89,12 +86,17 @@ class SegmentorConfig:
             raise FileNotFoundError(f"LAS file not found: {input_file}")
 
         ceiling_cfg = config_data.get("ceiling_segmentation", self.ceiling_segmentation)
-        min_h = ceiling_cfg.get("min_height_above_ground", 2.0)
-        max_h = ceiling_cfg.get("max_height_above_ground", 10.0)
-        if min_h < 0 or max_h < 0 or min_h > max_h:
+        fu = float(ceiling_cfg.get("facing_up_threshold", 0.95))
+        if fu <= 0 or fu > 1:
             raise ValueError(
-                "Invalid ceiling_segmentation height configuration: "
-                f"min_height_above_ground={min_h}, max_height_above_ground={max_h}"
+                "ceiling_segmentation.facing_up_threshold must be in (0, 1], "
+                f"got {fu}"
+            )
+        mid = float(ceiling_cfg.get("min_inlier_density", 15))
+        if mid < 0:
+            raise ValueError(
+                "ceiling_segmentation.min_inlier_density must be >= 0, "
+                f"got {mid}"
             )
 
         ground_cfg = config_data.get("ground_segmentation", self.ground_segmentation)

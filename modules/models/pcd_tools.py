@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import open3d as o3d
+from scipy.spatial import ConvexHull
 from modules.models.ai_object_detector import (
     identify_object_from_views,
     merge_identified_objects_record,
@@ -9,6 +10,42 @@ from modules.utils.log_utils import get_dual_logger
 from modules.utils import constants
 
 log = get_dual_logger(__name__)
+
+def get_inlier_density(point_array, inlier_indices, plane_model):
+    a, b, c, d = plane_model
+
+    # Get the inlier points as a numpy array
+    inlier_points = point_array[inlier_indices]
+
+    # --- Project points onto the plane's local 2D coordinate system ---
+    normal = np.array([a, b, c])
+    normal = normal / np.linalg.norm(normal)
+
+    # Build two orthogonal axes on the plane surface
+    arbitrary = np.array([1, 0, 0]) if abs(normal[0]) < 0.9 else np.array([0, 1, 0])
+    u = np.cross(normal, arbitrary)
+    u = u / np.linalg.norm(u)
+    v = np.cross(normal, u)
+
+    # Project each point onto (u, v) axes → 2D coordinates
+    points_2d = np.column_stack([
+        inlier_points @ u,
+        inlier_points @ v
+    ])
+
+    # --- Compute convex hull area ---
+    hull = ConvexHull(points_2d)
+    area = hull.volume  # in 2D, .volume gives the area
+
+    density = len(inlier_indices) / area
+
+    log.debug(
+        "get_inlier_density() => density: %s, area: %s, inlier_indices: %s",
+        density,
+        area,
+        len(inlier_indices),
+    )
+    return density
 
 def create_histogram(array, num_bins=256):
     counts, bin_edges = np.histogram(array, bins=num_bins)
@@ -31,7 +68,6 @@ def is_plane_facing_up(plane, threshold=0.95):
         result,
     )
     return result
-
 
 def is_plane_facing_side(plane, threshold=0.9):
     """True if the plane normal is nearly horizontal in XY (vertical wall), matching sandbox ``is_facing_side``."""
@@ -466,44 +502,35 @@ def apply_ransac_wall_detection(
 
 
 def apply_ransac_ceiling_detection(
-    pcd,
+    points: np.ndarray,
     points_attributes,
-    distance_threshold: float,
-    num_iterations: int,
-    max_tilt_from_horizontal_deg: float = 10.0,
-    min_height_above_ground: float = 2.0,
-    max_height_above_ground: float = 10.0,
-    ground_height: float | None = None,
+    facing_up_threshold: float = 0.95,
+    min_inlier_density: float = 15,
 ):
     """
-    Segment ceiling by repeatedly fitting dominant planes with RANSAC, matching
-    ``ransac_floor_segmentation`` (same loop, ``distance_threshold``, inner
-    ``segment_plane`` iterations, and ``orig_indices`` mapping). Inliers are
-    labeled as ceiling when the plane is nearly horizontal and within the
-    configured height band above ground.
+    Segment ceiling by repeated RANSAC planes (sandbox ``cieling_segmentation``).
+
+    Outer loop runs up to 100 times; each step uses ``segment_plane`` with
+    ``distance_threshold=0.1``, ``ransac_n=3``, and inner ``num_iterations=1000``.
+    A plane is accepted as ceiling when inlier density is at least
+    ``min_inlier_density`` (sandbox ``is_cieling_check`` used 15) and
+    ``is_plane_facing_up`` passes with ``threshold=facing_up_threshold``.
 
     Args:
-        pcd: Open3D point cloud.
-        points_attributes: Must include ``classification`` aligned with ``pcd``.
-        distance_threshold: Inlier distance to plane (Open3D ``segment_plane``).
-        num_iterations: Maximum number of plane extractions (outer loop).
-        max_tilt_from_horizontal_deg: Max deviation from horizontal for a ceiling.
-        min_height_above_ground / max_height_above_ground: Allowed Z band above ground.
-        ground_height: Optional fixed ground reference; else inferred from ground
-            classification or global minimum Z (same rules as before).
-    """
-    log.debug(
-        "RANSAC ceiling detection (distance_threshold=%.4f, num_iterations=%d)...",
-        distance_threshold,
-        num_iterations,
-    )
+        points: (N, 3) point coordinates.
+        points_attributes: Must include ``classification`` aligned with ``points``.
+        facing_up_threshold: Passed to ``is_plane_facing_up`` (sandbox ``is_facing_up``).
+        min_inlier_density: Minimum ``get_inlier_density`` for the plane inliers.
 
+    Returns:
+        Updated ``points_attributes``.
+    """
+
+    points = np.asarray(points, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] < 3:
+        raise ValueError("points must have shape (N, 3)")
     if "classification" not in points_attributes:
         raise KeyError("points_attributes must contain 'classification'")
-
-    points = np.asarray(pcd.points)
-    if points.ndim != 2 or points.shape[1] < 3:
-        raise ValueError("pcd must have points of shape (N, 3)")
 
     classification = np.asarray(points_attributes["classification"])
     if classification.shape[0] != points.shape[0]:
@@ -511,79 +538,42 @@ def apply_ransac_ceiling_detection(
             "length of points_attributes['classification'] does not match number of points"
         )
 
-    zs = points[:, 2]
-    ground_z_values = None
-    global_min_z = float(zs.min())
-    if ground_height is None:
-        ground_mask = classification == constants.PCB_CLASSIFICATION_GROUND
-        if np.any(ground_mask):
-            ground_z_values = zs[ground_mask].astype(float)
-            log.debug(
-                "Found %d ground-classified points for per-plane ground estimation.",
-                ground_z_values.size,
-            )
-        else:
-            log.debug(
-                "No ground-classified points found; falling back to global minimum Z "
-                "for per-plane ground estimation: %.3f",
-                global_min_z,
-            )
+    log.debug(
+        "RANSAC ceiling detection (facing_up_threshold=%.4f, min_inlier_density=%s)...",
+        facing_up_threshold,
+        min_inlier_density,
+    )
 
     def is_ceiling_check(plane_model, inlier_points_xyz):
-        a, b, c, _ = plane_model
-        normal = np.array([a, b, c], dtype=float)
-        normal = normal / np.linalg.norm(normal)
-        angle_from_horizontal = np.degrees(
-            np.arccos(np.clip(np.abs(normal[2]), -1.0, 1.0))
-        )
-        if angle_from_horizontal > max_tilt_from_horizontal_deg:
+        point_array = np.asarray(inlier_points_xyz)
+        if point_array.size == 0:
             return False
-
-        mean_z = float(np.mean(inlier_points_xyz[:, 2]))
-
-        if ground_height is not None:
-            local_ground_height = float(ground_height)
-        elif ground_z_values is not None and ground_z_values.size > 0:
-            below_or_equal = ground_z_values[ground_z_values <= mean_z]
-            if below_or_equal.size > 0:
-                local_ground_height = float(below_or_equal.max())
-            else:
-                idx_closest = np.argmin(np.abs(ground_z_values - mean_z))
-                local_ground_height = float(ground_z_values[idx_closest])
-        else:
-            local_ground_height = global_min_z
-
-        height_above_ground = mean_z - local_ground_height
-        ok = (
-            min_height_above_ground
-            <= height_above_ground
-            <= max_height_above_ground
+        inlier_indices = np.arange(len(point_array))
+        density = get_inlier_density(
+            point_array, inlier_indices, plane_model
         )
-        log.debug(
-            "ceiling check: angle=%.2f°, mean_z=%.3f, h_above_gnd=%.3f, accept=%s",
-            angle_from_horizontal,
-            mean_z,
-            height_above_ground,
-            ok,
-        )
-        return ok
+        if density < min_inlier_density:
+            return False
+        return is_plane_facing_up(plane_model, threshold=facing_up_threshold)
+
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
 
     ceiling_planes_found = 0
     assigned_count = 0
     remain_pcd = pcd
+    orig_indices = np.arange(len(points), dtype=np.int64)
     n = len(points)
-    orig_indices = np.arange(n, dtype=np.int64)
 
     log.info("Starting RANSAC ceiling detection on %d points...", n)
 
-    for _ in range(num_iterations):
+    for _ in range(100):
         if len(remain_pcd.points) <= 3:
             break
-
         plane_model, inliers = remain_pcd.segment_plane(
-            distance_threshold=distance_threshold,
+            distance_threshold=0.1,
             ransac_n=3,
-            num_iterations=1000,
+            num_iterations=5000,
         )
         inliers_arr = np.asarray(inliers, dtype=np.int64)
         if len(inliers_arr) == 0:
@@ -605,6 +595,9 @@ def apply_ransac_ceiling_detection(
         keep_mask[inliers_arr] = False
         orig_indices = orig_indices[keep_mask]
         remain_pcd = remain_pcd.select_by_index(inliers, invert=True)
+
+        if len(remain_pcd.points) <= 3:
+            break
 
     points_attributes["classification"] = classification
 
@@ -650,17 +643,11 @@ def apply_wall_segmentation(
 def apply_ceiling_segmentation(
     pcd,
     points_attributes,
-    distance_threshold: float = 0.01,
-    num_iterations: int = 1000,
-    max_tilt_from_horizontal_deg: float = 10.0,
-    min_height_above_ground: float = 2.0,
-    max_height_above_ground: float = 10.0,
-    ground_height: float | None = None,
+    facing_up_threshold: float = 0.95,
+    min_inlier_density: float = 15,
 ):
     """
-    Wrapper around apply_ransac_ceiling_detection that works directly with an
-    Open3D PointCloud, similar to how segment_ground and apply_wall_segmentation
-    operate.
+    Wrapper around ``apply_ransac_ceiling_detection`` for an Open3D PointCloud.
 
     Parameters
     ----------
@@ -668,23 +655,22 @@ def apply_ceiling_segmentation(
         Point cloud to segment.
     points_attributes : dict-like
         Per-point attributes dictionary.
-    distance_threshold / num_iterations : same role as in ``ransac_floor_segmentation``.
-    Other parameters are forwarded to apply_ransac_ceiling_detection.
+    facing_up_threshold : float
+        Ceiling horizontal normal gate; forwarded to ``apply_ransac_ceiling_detection``.
+    min_inlier_density : float
+        Minimum inlier density gate; forwarded to ``apply_ransac_ceiling_detection``.
 
     Returns
     -------
     (pcd, points_attributes) : tuple
         The original point cloud and updated attributes.
     """
+    points = np.asarray(pcd.points)
     points_attributes = apply_ransac_ceiling_detection(
-        pcd,
+        points,
         points_attributes,
-        distance_threshold=distance_threshold,
-        num_iterations=num_iterations,
-        max_tilt_from_horizontal_deg=max_tilt_from_horizontal_deg,
-        min_height_above_ground=min_height_above_ground,
-        max_height_above_ground=max_height_above_ground,
-        ground_height=ground_height,
+        facing_up_threshold=facing_up_threshold,
+        min_inlier_density=min_inlier_density,
     )
     return pcd, points_attributes
 

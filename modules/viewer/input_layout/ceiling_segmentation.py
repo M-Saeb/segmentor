@@ -3,20 +3,11 @@ from .base import InputLayout
 
 
 PARAM_CONFIG = {
-    "distance_threshold": {"label": "Distance threshold", "visible": True},
-    "num_iterations": {"label": "Num iterations", "visible": True},
-    "max_tilt_from_horizontal_deg": {"label": "Max tilt from horizontal (deg)", "visible": True},
-    "min_height_above_ground": {"label": "Min height above ground", "visible": True},
-    "max_height_above_ground": {"label": "Max height above ground", "visible": True},
+    "facing_up_threshold": {"label": "Facing up threshold", "visible": True},
+    "min_inlier_density": {"label": "Min inlier density", "visible": True},
 }
 
-KEY_ORDER = [
-    "distance_threshold",
-    "num_iterations",
-    "max_tilt_from_horizontal_deg",
-    "min_height_above_ground",
-    "max_height_above_ground",
-]
+KEY_ORDER = ["facing_up_threshold", "min_inlier_density"]
 
 
 class InputLayoutCeilingSegmentation(InputLayout):
