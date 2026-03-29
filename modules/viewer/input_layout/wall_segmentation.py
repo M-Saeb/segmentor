@@ -3,14 +3,10 @@ from .base import InputLayout
 
 
 PARAM_CONFIG = {
-    "epsilon": {"label": "Epsilon", "visible": True},
-    "min_support_points": {"label": "Min support points", "visible": True},
-    "max_normal_dev": {"label": "Max normal deviation", "visible": True},
-    "max_iterations": {"label": "Max iterations", "visible": False},
-    "min_plane_size_ratio": {"label": "Min plane size ratio", "visible": False},
+    "rotation_threshold": {"label": "Rotation threshold", "visible": True},
 }
 
-KEY_ORDER = ["epsilon", "min_support_points", "max_normal_dev"]
+KEY_ORDER = ["rotation_threshold"]
 
 
 class InputLayoutWallSegmentation(InputLayout):

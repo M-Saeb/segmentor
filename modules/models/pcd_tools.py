@@ -32,6 +32,15 @@ def is_plane_facing_up(plane, threshold=0.95):
     )
     return result
 
+
+def is_plane_facing_side(plane, threshold=0.9):
+    """True if the plane normal is nearly horizontal in XY (vertical wall), matching sandbox ``is_facing_side``."""
+    a, b, c, d = plane
+    normal = np.array([a, b, c], dtype=float)
+    normal = normal / np.linalg.norm(normal)
+    return abs(normal[2]) < (1.0 - threshold)
+
+
 def planes_footprint_overlap_xy(pcd_a, pcd_b, padding=0.0, min_overlap_area_m2=0.0):
     pts_a = np.asarray(pcd_a.points)
     pts_b = np.asarray(pcd_b.points)
@@ -375,135 +384,83 @@ def segment_ground(
 def apply_ransac_wall_detection(
     points: np.ndarray,
     points_attributes,
-    epsilon: float = 0.01,
-    min_support_points: int = 2000,
-    max_normal_dev: float = 10.0,
-    max_iterations: int = 1000,
-    min_plane_size_ratio: float = 0.01
+    rotation_threshold: float = 0.9,
 ):
     """
-    Apply RANSAC plane detection for wall segmentation on a point cloud.
-    
-    Parameters:
-    -----------
-    points : np.ndarray
-        3D numpy array of shape (N, 3) containing point cloud coordinates
-    points_attributes : dict-like
-        Must contain a `classification` array-like with length N
-    epsilon : float
-        Maximum distance from point to plane to be considered an inlier (default: 0.001)
-    min_support_points : int
-        Minimum number of points required to form a valid plane (default: 20000)
-    max_normal_dev : float
-        Maximum allowed deviation from vertical in degrees for wall classification (default: 10.0)
-    max_iterations : int
-        Maximum number of RANSAC iterations per plane detection (default: 1000)
-    min_plane_size_ratio : float
-        Minimum ratio of remaining points to continue detection (default: 0.01)
+    Segment walls by repeatedly fitting dominant planes with RANSAC (same loop
+    structure as ``ransac_floor_segmentation`` and sandbox ``segment_walls``).
+    Inliers on nearly-vertical planes label INIT points as wall.
+
+    ``distance_threshold`` (0.1) and inner ``segment_plane`` iteration count
+    (5000) match sandbox ``segment_walls``. Wall acceptance uses
+    ``is_plane_facing_side`` with ``threshold=rotation_threshold`` (sandbox
+    ``is_facing_side``).
+
+    Args:
+        points: (N, 3) point coordinates.
+        points_attributes: Must include ``classification`` aligned with ``points``.
+        rotation_threshold: Passed to ``is_plane_facing_side``; higher values
+            require normals closer to the horizontal XY plane (stricter vertical wall).
 
     Returns:
-    --------
-    dict
-        The updated `points_attributes` with `WALL_CLASSIFICATION` assigned where applicable.
+        Updated ``points_attributes``.
     """
-
-    # input validation
-    if not isinstance(points, np.ndarray):
-        raise TypeError("points must be a numpy.ndarray of shape (N,3)")
+    points = np.asarray(points, dtype=np.float64)
     if points.ndim != 2 or points.shape[1] < 3:
-        raise ValueError("points must have shape (N,3)")
-    if 'classification' not in points_attributes:
+        raise ValueError("points must have shape (N, 3)")
+    if "classification" not in points_attributes:
         raise KeyError("points_attributes must contain 'classification'")
 
-    classification = np.asarray(points_attributes['classification'])
+    classification = np.asarray(points_attributes["classification"])
     if classification.shape[0] != points.shape[0]:
-        raise ValueError("length of points_attributes['classification'] does not match number of points")
+        raise ValueError(
+            "length of points_attributes['classification'] does not match number of points"
+        )
 
-    # Convert to Open3D point cloud
+
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
 
-    # Results storage (kept for logging/debugging)
-    detected_planes = []
-    plane_points_list = []
-    plane_indices_list = []
-    wall_indices = []
+    remain_pcd = pcd
+    orig_indices = np.arange(len(points), dtype=np.int64)
+    wall_planes_found = 0
+    assigned_count = 0
 
-    # Keep track of remaining points
-    remaining_indices = np.arange(len(points))
-    remaining_pcd = pcd
-
-    plane_id = 0
-
-    log.info("Starting RANSAC Wall Segmentation on %d points...", len(points))
-
-    while len(remaining_indices) > len(points) * min_plane_size_ratio:
-        # Apply RANSAC to detect one plane
-        plane_model, inliers = remaining_pcd.segment_plane(
-            distance_threshold=epsilon,
-            ransac_n=3,
-            num_iterations=max_iterations
-        )
-
-        # Check if enough inliers found
-        if len(inliers) < min_support_points:
-            log.info("Stopping: Found only %d inliers (minimum: %d)", len(inliers), min_support_points)
+    for _ in range(100):
+        if len(remain_pcd.points) <= 3:
+            log.debug("RANSAC wall detection: no more points to segment")
             break
 
-        # Extract plane parameters [a, b, c, d]
-        a, b, c, d = plane_model
+        plane_model, inliers = remain_pcd.segment_plane(
+            distance_threshold=0.1,
+            ransac_n=3,
+            num_iterations=5000,
+        )
+        inliers_arr = np.asarray(inliers, dtype=np.int64)
 
-        # Normalize the normal vector
-        normal = np.array([a, b, c])
-        normal = normal / np.linalg.norm(normal)
-
-        # Check if this is a wall (vertical plane)
-        # A vertical plane has a normal vector mostly parallel to XY plane
-        # i.e., small Z component
-        angle_from_vertical = np.abs(np.arcsin(normal[2])) * 180 / np.pi
-        is_wall = angle_from_vertical <= max_normal_dev
-
-        # Get actual point indices in original cloud
-        actual_indices = remaining_indices[inliers]
-
-        # Store results
-        detected_planes.append(plane_model)
-        plane_points_list.append(points[actual_indices])
-        plane_indices_list.append(actual_indices)
+        is_wall = is_plane_facing_side(plane_model, threshold=rotation_threshold)
 
         if is_wall:
-            wall_indices.append(plane_id)
+            wall_planes_found += 1
+            global_idx = orig_indices[inliers_arr]
+            mask_init = classification[global_idx] == constants.PCB_CLASSIFICATION_INIT
+            if np.any(mask_init):
+                idx_to_set = global_idx[mask_init]
+                classification[idx_to_set] = constants.PCB_CLASSIFICATION_WALL
+                assigned_count += int(idx_to_set.size)
 
-        log.debug("Plane %d: %d points, angle from vertical: %.2f°, is_wall: %s", 
-                  plane_id, len(inliers), angle_from_vertical, is_wall)
+        keep_mask = np.ones(len(orig_indices), dtype=bool)
+        keep_mask[inliers_arr] = False
+        orig_indices = orig_indices[keep_mask]
+        remain_pcd = remain_pcd.select_by_index(inliers, invert=True)
 
-        # Remove inliers from remaining points
-        remaining_indices = np.delete(remaining_indices, inliers)
+    points_attributes["classification"] = classification
 
-        if len(remaining_indices) == 0:
-            break
-
-        # Create new point cloud with remaining points
-        remaining_pcd = o3d.geometry.PointCloud()
-        remaining_pcd.points = o3d.utility.Vector3dVector(points[remaining_indices])
-
-        plane_id += 1
-
-    # Assign WALL_CLASSIFICATION to points that belong to detected wall planes
-    assigned_count = 0
-    for pid in wall_indices:
-        actual_indices = plane_indices_list[pid]
-        # only overwrite points that are still in INIT_CLASSIFICATION
-        mask_unclassified = classification[actual_indices] == constants.PCB_CLASSIFICATION_INIT
-        if np.any(mask_unclassified):
-            idx_to_set = actual_indices[mask_unclassified]
-            classification[idx_to_set] = constants.PCB_CLASSIFICATION_WALL
-            assigned_count += idx_to_set.size
-
-    points_attributes['classification'] = classification
-
-    log.info("Walls RANSAC Segmentation complete: %d planes found, %d walls detected, %d points labeled as WALL", 
-             len(detected_planes), len(wall_indices), assigned_count)
+    log.info(
+        "Wall RANSAC complete: %d wall plane(s) accepted, %d points labeled as WALL",
+        wall_planes_found,
+        assigned_count,
+    )
 
     return points_attributes
 
@@ -662,15 +619,10 @@ def apply_ransac_ceiling_detection(
 def apply_wall_segmentation(
     pcd,
     points_attributes,
-    epsilon: float = 0.01,
-    min_support_points: int = 2000,
-    max_normal_dev: float = 10.0,
-    max_iterations: int = 1000,
-    min_plane_size_ratio: float = 0.01,
+    rotation_threshold: float = 0.9,
 ):
     """
-    Wrapper around apply_ransac_wall_detection that works directly with an
-    Open3D PointCloud, similar to how segment_ground wraps cloth_simulation_filter().
+    Wrapper around ``apply_ransac_wall_detection`` for an Open3D PointCloud.
 
     Parameters
     ----------
@@ -678,7 +630,8 @@ def apply_wall_segmentation(
         Point cloud to segment.
     points_attributes : dict-like
         Per-point attributes dictionary.
-    Other parameters are forwarded to apply_ransac_wall_detection.
+    rotation_threshold : float
+        Wall orientation gate; forwarded to ``apply_ransac_wall_detection``.
 
     Returns
     -------
@@ -689,11 +642,7 @@ def apply_wall_segmentation(
     points_attributes = apply_ransac_wall_detection(
         points,
         points_attributes,
-        epsilon=epsilon,
-        min_support_points=min_support_points,
-        max_normal_dev=max_normal_dev,
-        max_iterations=max_iterations,
-        min_plane_size_ratio=min_plane_size_ratio,
+        rotation_threshold=rotation_threshold,
     )
     return pcd, points_attributes
 

@@ -120,13 +120,9 @@ class Controller:
         )
 
     def _make_wall_segmentation_stage(self) -> PipelineStage:
-        # Defaults mirror the algorithm defaults in pcd_tools.apply_wall_segmentation.
+        wall_cfg = getattr(self.config, "wall_segmentation", {})
         params: Dict[str, object] = {
-            "epsilon": 0.01,
-            "min_support_points": 2000,
-            "max_normal_dev": 10.0,
-            "max_iterations": 1000,
-            "min_plane_size_ratio": 0.01,
+            "rotation_threshold": float(wall_cfg.get("rotation_threshold", 0.9)),
         }
 
         return PipelineStage(
