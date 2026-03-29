@@ -1,6 +1,6 @@
 import yaml
 import os
-
+import tempfile
 
 class SegmentorConfig:
     """
@@ -15,8 +15,14 @@ class SegmentorConfig:
     # Pre-defined default parameters
     input_file: str = "./input.las"
     reset_classification: bool = True
-    filter_noise: bool = False
+    filter_noise: dict = {
+        "nb_neighbors": 20,
+        "std_ratio": 2.0
+    }
     chunk_size: int = 5_000_000
+    downsample: dict = {
+        "voxel_size": 0.15
+    }
     previewer = {
         "maximum_points": 500_000
     }

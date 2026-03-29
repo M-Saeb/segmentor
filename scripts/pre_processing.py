@@ -1,33 +1,4 @@
-#!/usr/bin/env python3
-"""
-Pre-process LAS/LAZ data by reordering (sorting) points for better spatial locality
-when read in fixed-size chunks.
-
-Modes:
-  - lex: lexicographic (X, then Y, then Z) — can look like long thin strips per chunk.
-  - spatial-xy: adaptive XY quadtree leaves, then Z within each leaf.
-  - uniform-xy: uniform XY grid sized from bbox and target points per cell.
-  - kd-tree: Open3D `KDTreeFlann` nearest-seed binning, then Z within each bin (default).
-
-Reads via LasWrapper chunk iteration, merges in memory, sorts once, writes using the
-wrapper's header helper.
-
-Outputs a Segmentor VLR (JSON: ``segmentor_is_sorted``, ``sort_mode``) unless
-``--no-segmentor-vlr`` is set.
-
-With ``--sort-mode kd-tree``, also writes ``index.json`` next to the output LAS:
-half-open ``[start, end)`` ranges per spatial bin in sorted file order (for chunk
-processing).
-
-Run from the project root so `modules` imports resolve, e.g.:
-
-    python scripts/pre_processing.py -i input.las -o preprocessed.las
-    python scripts/pre_processing.py -i in.las -o out.las --sort-mode lex
-"""
-
-from __future__ import annotations
-
-import argparse
+import tempfile
 import json
 import os
 import sys
@@ -44,7 +15,7 @@ if str(_ROOT) not in sys.path:
 
 from modules.models.las_wrapper import LasWrapper  # noqa: E402
 from modules.models import pcd_tools  # noqa: E402
-from modules.utils import config as config_module  # noqa: E402
+from modules.utils.config import SegmentorConfig  # noqa: E402
 from modules.utils import log_utils  # noqa: E402
 
 log = log_utils.get_dual_logger(__name__)
@@ -74,12 +45,6 @@ def _merge_chunks(wrap: LasWrapper) -> tuple[o3d.geometry.PointCloud, dict[str, 
     merged_pcd = o3d.geometry.PointCloud()
     merged_pcd.points = o3d.utility.Vector3dVector(xyz)
     return merged_pcd, merged_attrs
-
-
-def _lexsort_xyz(xyz: np.ndarray) -> np.ndarray:
-    """Return indices that sort points by X, then Y, then Z (np.lexsort key order)."""
-    return np.lexsort((xyz[:, 2], xyz[:, 1], xyz[:, 0]))
-
 
 def _quadtree_leaves(
     xy: np.ndarray,
@@ -140,55 +105,6 @@ def _quadtree_leaves(
             )
         )
     return leaves
-
-
-def _order_spatial_xy_quadtree(
-    xyz: np.ndarray,
-    target_points: int,
-    max_depth: int,
-    min_tile_meters: float,
-) -> np.ndarray:
-    """Sort key: quadtree leaf id (DFS), then Z."""
-    n = len(xyz)
-    xy = xyz[:, :2]
-    root_idx = np.arange(n, dtype=np.int64)
-    leaves = _quadtree_leaves(
-        xy, root_idx, target_points, max_depth, min_tile_meters, 0
-    )
-    leaf_id = np.empty(n, dtype=np.int64)
-    for lid, leaf in enumerate(leaves):
-        leaf_id[leaf] = lid
-    z = xyz[:, 2]
-    return np.lexsort((z, leaf_id))
-
-
-def _order_uniform_xy(xyz: np.ndarray, target_points: int) -> np.ndarray:
-    """
-    Uniform XY grid: choose nx, ny so approximate cells ≈ N / target_points, then
-    sort by cell_id, then Z.
-    """
-    log.info("Ordering uniform XY grid")
-    n = len(xyz)
-    if n == 0:
-        return np.array([], dtype=np.int64)
-
-    xy = xyz[:, :2]
-    xmin, ymin = xy.min(axis=0)
-    xmax, ymax = xy.max(axis=0)
-    ex = max(float(xmax - xmin), 1e-12)
-    ey = max(float(ymax - ymin), 1e-12)
-
-    num_tiles = max(1, int(np.ceil(n / float(target_points))))
-    nx = max(1, int(round(np.sqrt(num_tiles * (ex / ey)))))
-    ny = max(1, int(np.ceil(num_tiles / nx)))
-
-    ix = np.floor((xy[:, 0] - xmin) / (ex / nx)).astype(np.int64)
-    iy = np.floor((xy[:, 1] - ymin) / (ey / ny)).astype(np.int64)
-    ix = np.clip(ix, 0, nx - 1)
-    iy = np.clip(iy, 0, ny - 1)
-    cell_id = ix + nx * iy
-    z = xyz[:, 2]
-    return np.lexsort((z, cell_id))
 
 
 def _voxel_downsample_preserve_attributes(
@@ -260,7 +176,6 @@ def _kdtree_seed_grid_3d(
     ymax: float,
     zmax: float,
     num_bins: int,
-    min_tile_meters: float,
 ) -> tuple[np.ndarray, int, int, int]:
     """Build a 3D uniform grid of seed positions; return (seeds, nx, ny, nz)."""
     ex = max(float(xmax - xmin), 1e-12)
@@ -272,26 +187,6 @@ def _kdtree_seed_grid_3d(
     nx = max(1, int(round(s * ex)))
     ny = max(1, int(round(s * ey)))
     nz = max(1, int(round(s * ez)))
-
-    if min_tile_meters > 0:
-        while nx * ny * nz > 1:
-            dx = ex / nx
-            dy = ey / ny
-            dz = ez / nz
-            if min(dx, dy, dz) >= min_tile_meters - 1e-12:
-                break
-            # Coarsen the axis with the smallest cell edge (finest subdivision).
-            edges = [(dx, "x"), (dy, "y"), (dz, "z")]
-            edges.sort(key=lambda t: t[0])
-            _, which = edges[0]
-            if which == "x" and nx > 1:
-                nx = max(1, nx // 2)
-            elif which == "y" and ny > 1:
-                ny = max(1, ny // 2)
-            elif nz > 1:
-                nz = max(1, nz // 2)
-            else:
-                break
 
     xs = np.linspace(xmin + ex / (2 * nx), xmax - ex / (2 * nx), nx)
     ys = np.linspace(ymin + ey / (2 * ny), ymax - ey / (2 * ny), ny)
@@ -307,7 +202,6 @@ def _order_kdtree_index(
     xyz: np.ndarray,
     target_points: int,
     max_depth: int,
-    min_tile_meters: float,
 ) -> tuple[np.ndarray, list[dict[str, int]], int]:
     """Nearest-seed binning via Open3D ``KDTreeFlann``, then Z within each bin.
 
@@ -330,7 +224,7 @@ def _order_kdtree_index(
     num_bins = min(num_bins, cap)
 
     seeds, nx, ny, nz = _kdtree_seed_grid_3d(
-        xmin, ymin, zmin, xmax, ymax, zmax, num_bins, min_tile_meters
+        xmin, ymin, zmin, xmax, ymax, zmax, num_bins
     )
     num_seeds = int(len(seeds))
     if num_seeds == 0:
@@ -388,9 +282,6 @@ def _write_las(
     output_path: str,
     xyz: np.ndarray,
     merged_attrs: dict[str, np.ndarray],
-    *,
-    sort_mode: str,
-    write_segmentor_vlr: bool = True,
 ) -> None:
     """
     Write LAS in slices of ``wrap.config.chunk_size``, matching
@@ -406,19 +297,6 @@ def _write_las(
         chunk_size = max(n, 1)
 
     base_header = wrap._create_new_las_filer_header()
-    if write_segmentor_vlr:
-        payload = json.dumps(
-            {"segmentor_is_sorted": True, "sort_mode": sort_mode},
-            separators=(",", ":"),
-        ).encode("utf-8")
-        base_header.vlrs.append(
-            VLR(
-                user_id="Segmentor",
-                record_id=65001,
-                description="segmentor_preprocess_metadata",
-                record_data=payload,
-            )
-        )
 
     with laspy.open(output_path, mode="w", header=base_header) as _writer:
         pass
@@ -441,182 +319,67 @@ def _write_las(
             log.debug("Appended points [%d, %d)", start, end)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Pre-processing of LAS file for better spatial locality."
-    )
-    parser.add_argument("--input", "-i", required=True, help="Input .las or .laz path")
-    parser.add_argument("--output", "-o", required=True, help="Output .las path")
-    parser.add_argument(
-        "--config",
-        "-c",
-        default="config.yml",
-        help="YAML config path (chunk_size and LasWrapper settings come from here)",
-    )
-    parser.add_argument(
-        "--sort-mode",
-        choices=("lex", "spatial-xy", "uniform-xy", "kd-tree", "none"),
-        default="none",
-        help=(
-            "lex=XYZ sweep; spatial-xy=adaptive quadtree on XY; "
-            "uniform-xy=fixed grid; kd-tree=Open3D KDTreeFlann nearest-seed binning "
-            "(writes index.json beside -o); none=no sorting (default: kd-tree)"
-        ),
-    )
-    parser.add_argument(
-        "--target-points-per-tile",
-        type=int,
-        default=25000,
-        metavar="N",
-        help="Target max points per XY tile (quadtree leaf or uniform cell). "
-        "Defaults to chunk_size from config.",
-    )
-    parser.add_argument(
-        "--min-tile-meters",
-        type=float,
-        default=0.0,
-        metavar="M",
-        help="Stop subdividing when tile edge lengths are at or below this (meters; spatial-xy and kd-tree; 0=disabled).",
-    )
-    parser.add_argument(
-        "--filter-noise",
-        action="store_true",
-        default=False,
-        help="Remove statistical outliers (Open3D) (default: True).",
-    )
-    parser.add_argument(
-        "--nb-neighbors",
-        type=int,
-        default=20,
-        metavar="K",
-        help="Statistical outlier removal: nb_neighbors (default: 20).",
-    )
-    parser.add_argument(
-        "--std-ratio",
-        type=float,
-        default=2.0,
-        metavar="R",
-        help="Statistical outlier removal: std_ratio (default: 2.0).",
-    )
-    parser.add_argument(
-        "--voxel-size",
-        type=float,
-        default=0.15,
-        metavar="S",
-        help="Voxel downsampling size passed to Open3D (default: 0.1).",
-    )
-    parser.add_argument(
-        "--no-segmentor-vlr",
-        action="store_true",
-        help="Do not write the Segmentor preprocessing JSON metadata VLR (segmentor_is_sorted).",
-    )
-    args = parser.parse_args()
+def run_script(
+    config: SegmentorConfig,
+) -> int:
 
-    input_path = os.path.abspath(args.input)
-    output_path = os.path.abspath(args.output)
-    if not os.path.isfile(input_path):
-        print(f"Input not found: {input_path}", file=sys.stderr)
-        return 1
-
-    cfg = config_module.SegmentorConfig(args.config)
-    cfg.input_file = input_path
-    cfg.reset_classification = False
-
-    target = args.target_points_per_tile
-    if target <= 0:
-        log.error("--target-points-per-tile / chunk_size must be positive.")
-        return 1
-
-    wrap = LasWrapper(cfg, auto_read_input_file=False)
+    wrap = LasWrapper(config, auto_read_input_file=False)
 
     pcd, merged_attrs = _merge_chunks(wrap)
     log.info("Initial point count: %d", len(pcd.points))
 
     # 2) Remove Statistical outliers (Open3D) while keeping attributes aligned.
-    if args.filter_noise:
-        pcd, merged_attrs = pcd_tools.filter_noise(
-            pcd,
-            merged_attrs,
-            nb_neighbors=args.nb_neighbors,
-            std_ratio=args.std_ratio,
-        )
-        log.info("After statistical outlier removal: %d", len(pcd.points))
-    else:
-        log.info("Skipping statistical outlier removal")
-
+    pcd, merged_attrs = pcd_tools.filter_noise(
+        pcd,
+        merged_attrs,
+        nb_neighbors=config.filter_noise["nb_neighbors"],
+        std_ratio=config.filter_noise["std_ratio"],
+    )
+    log.info("After statistical outlier removal: %d", len(pcd.points))
 
     # 3) Voxel downsampling (Open3D), preserving LAS attributes by nearest neighbor.
     pcd, merged_attrs = _voxel_downsample_preserve_attributes(
         pcd,
         merged_attrs,
-        voxel_size=args.voxel_size,
+        voxel_size=config.downsample["voxel_size"],
     )
     log.info("After voxel downsampling: %d", len(pcd.points))
 
     xyz = np.asarray(pcd.points)
-
-    sort_mode = args.sort_mode
     kd_num_seeds = 0
     kd_chunks: list[dict[str, int]] = []
-    if sort_mode == "lex":
-        order = _lexsort_xyz(xyz)
-        label = "XYZ lexicographic"
-    elif sort_mode == "uniform-xy":
-        order = _order_uniform_xy(xyz, target)
-        label = f"uniform XY (target ~{target} pts/tile)"
-    elif sort_mode == "spatial-xy":
-        order = _order_spatial_xy_quadtree(
-            xyz,
-            target_points=target,
-            max_depth=64,
-            min_tile_meters=args.min_tile_meters,
-        )
-        label = f"spatial XY quadtree (target ~{target} pts/leaf)"
-    elif sort_mode == "kd-tree":
-        order, kd_chunks, kd_num_seeds = _order_kdtree_index(
-            xyz,
-            target_points=target,
-            max_depth=64,
-            min_tile_meters=args.min_tile_meters,
-        )
-        label = f"kd-tree indexing (target ~{target} pts/leaf)"
-    else:
-        order = np.arange(len(xyz), dtype=np.int64)
-        label = "no sorting"
+    order, kd_chunks, kd_num_seeds = _order_kdtree_index(
+        xyz,
+        target_points=config.chunk_size,
+        max_depth=64,
+    )
 
-    if sort_mode != "none":
-        log.debug("Sorting with %s", sort_mode)
-        xyz = xyz[order]
-        for dim in list(merged_attrs.keys()):
-            merged_attrs[dim] = merged_attrs[dim][order]
-    else:
-        log.info("Skipping sorting")
+    tmp_folder_path = tempfile.mkdtemp(prefix=f"segmentor_{wrap.genrate_unique_id()}")
+    log.info(f"Storing pre-processed data in: {tmp_folder_path}")
+    output_path = os.path.join(tmp_folder_path, "output.las")
+    index_path = os.path.join(tmp_folder_path, "index.json")
 
     _write_las(
         wrap,
         output_path,
         xyz,
         merged_attrs,
-        sort_mode=sort_mode,
-        write_segmentor_vlr=not args.no_segmentor_vlr,
     )
+    index_payload = {
+        "target_points_per_tile": config.chunk_size,
+        "num_seeds": kd_num_seeds,
+        "chunks": kd_chunks,
+    }
+    with open(index_path, "w") as f:
+        json.dump(index_payload, f, indent=2)
+    log.info("Wrote spatial bin index to %s", index_path)
 
-    if sort_mode == "kd-tree":
-        index_path = Path(output_path).parent / "index.json"
-        index_payload = {
-            "sort_mode": sort_mode,
-            "target_points_per_tile": target,
-            "num_seeds": kd_num_seeds,
-            "chunks": kd_chunks,
-        }
-        index_path.write_text(
-            json.dumps(index_payload, indent=2),
-            encoding="utf-8",
-        )
-        log.info("Wrote spatial bin index to %s", index_path)
+    return tmp_folder_path
 
-    print(f"Wrote {len(xyz):,} points ({label}) to {output_path}")
-    return 0
+def main() -> int:
+    return run_script(
+        config=SegmentorConfig("config.yml"),
+    )
 
 
 if __name__ == "__main__":

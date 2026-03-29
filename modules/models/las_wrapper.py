@@ -1,4 +1,5 @@
 import os
+import hashlib
 import laspy
 import open3d as o3d
 import numpy as np
@@ -27,6 +28,16 @@ class LasWrapper:
             self.current_chunk = self._load_chunk_at_index(self._chunk_index)
         log.debug("Chunk size set to: %d", self.config.chunk_size)
         log.debug("Reset classification is set to: %s", self.config.reset_classification)
+
+    def genrate_unique_id(self) -> str:
+        """Read the meta data of the LAS to generate a unique id for the file.
+        """
+        header = self._get_original_las_header()
+        items = []
+        for key in header.__dict__.keys():
+            items.append(f"{key}: {getattr(header, key)}")
+        raw_string = "\n".join(items)
+        return hashlib.sha256(raw_string.encode()).hexdigest()
 
     def _compute_total_chunks(self) -> int:
         header = self._get_original_las_header()
