@@ -97,11 +97,15 @@ class Controller:
     def _make_ceiling_segmentation_stage(self) -> PipelineStage:
         ceiling_cfg = getattr(self.config, "ceiling_segmentation", {})
         params: Dict[str, object] = {
-            "epsilon": ceiling_cfg.get("epsilon", 0.01),
-            "min_support_points": ceiling_cfg.get("min_support_points", 2000),
-            "max_tilt_from_horizontal_deg": ceiling_cfg.get("max_tilt_from_horizontal_deg", 10.0),
-            "max_iterations": ceiling_cfg.get("max_iterations", 1000),
-            "min_plane_size_ratio": ceiling_cfg.get("min_plane_size_ratio", 0.01),
+            "distance_threshold": ceiling_cfg.get(
+                "distance_threshold", ceiling_cfg.get("epsilon", 0.01)
+            ),
+            "num_iterations": int(
+                ceiling_cfg.get("num_iterations", ceiling_cfg.get("max_iterations", 1000))
+            ),
+            "max_tilt_from_horizontal_deg": ceiling_cfg.get(
+                "max_tilt_from_horizontal_deg", 10.0
+            ),
             "min_height_above_ground": ceiling_cfg.get("min_height_above_ground", 2.0),
             "max_height_above_ground": ceiling_cfg.get("max_height_above_ground", 10.0),
         }

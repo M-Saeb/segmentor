@@ -15,6 +15,10 @@ wrapper's header helper.
 Outputs a Segmentor VLR (JSON: ``segmentor_is_sorted``, ``sort_mode``) unless
 ``--no-segmentor-vlr`` is set.
 
+With ``--sort-mode kd-tree``, also writes ``index.json`` next to the output LAS:
+half-open ``[start, end)`` ranges per spatial bin in sorted file order (for chunk
+processing).
+
 Run from the project root so `modules` imports resolve, e.g.:
 
     python scripts/pre_processing.py -i input.las -o preprocessed.las
@@ -248,58 +252,135 @@ def _voxel_downsample_preserve_attributes(
     return down_pcd, new_attrs
 
 
+def _kdtree_seed_grid_3d(
+    xmin: float,
+    ymin: float,
+    zmin: float,
+    xmax: float,
+    ymax: float,
+    zmax: float,
+    num_bins: int,
+    min_tile_meters: float,
+) -> tuple[np.ndarray, int, int, int]:
+    """Build a 3D uniform grid of seed positions; return (seeds, nx, ny, nz)."""
+    ex = max(float(xmax - xmin), 1e-12)
+    ey = max(float(ymax - ymin), 1e-12)
+    ez = max(float(zmax - zmin), 1e-12)
+
+    num_bins = max(1, int(num_bins))
+    s = (num_bins / (ex * ey * ez)) ** (1.0 / 3.0)
+    nx = max(1, int(round(s * ex)))
+    ny = max(1, int(round(s * ey)))
+    nz = max(1, int(round(s * ez)))
+
+    if min_tile_meters > 0:
+        while nx * ny * nz > 1:
+            dx = ex / nx
+            dy = ey / ny
+            dz = ez / nz
+            if min(dx, dy, dz) >= min_tile_meters - 1e-12:
+                break
+            # Coarsen the axis with the smallest cell edge (finest subdivision).
+            edges = [(dx, "x"), (dy, "y"), (dz, "z")]
+            edges.sort(key=lambda t: t[0])
+            _, which = edges[0]
+            if which == "x" and nx > 1:
+                nx = max(1, nx // 2)
+            elif which == "y" and ny > 1:
+                ny = max(1, ny // 2)
+            elif nz > 1:
+                nz = max(1, nz // 2)
+            else:
+                break
+
+    xs = np.linspace(xmin + ex / (2 * nx), xmax - ex / (2 * nx), nx)
+    ys = np.linspace(ymin + ey / (2 * ny), ymax - ey / (2 * ny), ny)
+    zs = np.linspace(zmin + ez / (2 * nz), zmax - ez / (2 * nz), nz)
+    xi, yi, zi = np.meshgrid(xs, ys, zs, indexing="ij")
+    seeds = np.column_stack((xi.ravel(), yi.ravel(), zi.ravel())).astype(
+        np.float64, copy=False
+    )
+    return seeds, nx, ny, nz
+
+
 def _order_kdtree_index(
     xyz: np.ndarray,
     target_points: int,
     max_depth: int,
     min_tile_meters: float,
-) -> np.ndarray:
-    """Sort using Open3D KD-tree nearest-seed indexing, then Z within each bin. """
+) -> tuple[np.ndarray, list[dict[str, int]], int]:
+    """Nearest-seed binning via Open3D ``KDTreeFlann``, then Z within each bin.
+
+    Returns a permutation ``order`` such that ``xyz[order]`` groups points by
+    nearest seed (bin), with Z sorted inside each bin. ``chunks`` lists non-empty
+    bins in bin_id order with half-open ``[start, end)`` indices into that sorted
+    array (``index.json`` uses the same ranges after reordering is applied).
+    ``num_seeds`` is the number of seed points (spatial bins), including empty bins.
+    """
     n = len(xyz)
     if n == 0:
-        return np.array([], dtype=np.int64)
-    if target_points <= 0:
-        raise ValueError("target_points must be positive.")
+        return np.arange(0, dtype=np.int64), [], 0
 
-    # Early stop: if the whole cloud is already within the min tile size.
-    if min_tile_meters > 0.0:
-        return xyz
+    xyz = np.asarray(xyz, dtype=np.float64)
+    xmin, ymin, zmin = xyz.min(axis=0)
+    xmax, ymax, zmax = xyz.max(axis=0)
 
-    # # Determine how many seed bins to use.
-    # n_seeds = int(np.ceil(n / float(target_points)))
-    # n_seeds = max(1, n_seeds)
+    num_bins = max(1, int(np.ceil(n / float(target_points))))
+    cap = 2 ** min(max(0, int(max_depth)), 24)
+    num_bins = min(num_bins, cap)
 
-    # # Use max_depth to cap number of bins (2**depth), but keep it bounded for safety.
-    # if max_depth > 0:
-    #     capped_depth = min(int(max_depth), 20)  # 2**20 ~ 1M bins max
-    #     max_seeds = 1 << capped_depth
-    #     n_seeds = min(n_seeds, max_seeds)
-
-    # if n_seeds <= 1:
-    #     # With 1 bin, sorting by Z alone is a bit arbitrary; use lexsort for determinism.
-    #     return _lexsort_xyz(xyz)
-
-    # # Deterministic seed selection: take lexicographically smallest points spread out.
-    # lex_order = _lexsort_xyz(xyz)
-    # step = max(1, n // n_seeds)
-    # seed_indices = lex_order[::step][:n_seeds]
-    # seeds = xyz[seed_indices]
-
-    # Assign each point to its nearest seed using Open3D KD-tree indexing.
-    seed_pcd = o3d.geometry.PointCloud()
-    seed_pcd.points = o3d.utility.Vector3dVector(xyz)
-    seed_tree = o3d.geometry.KDTreeFlann(seed_pcd)
-
-    bin_ids = np.empty(n, dtype=np.int64)
-    for i in range(n):
-        # `search_knn_vector_3d` expects a plain tuple/list-like [x,y,z].
-        _, ind, _ = seed_tree.search_knn_vector_3d(
-            xyz[i].astype(np.float64, copy=False), 1
+    seeds, nx, ny, nz = _kdtree_seed_grid_3d(
+        xmin, ymin, zmin, xmax, ymax, zmax, num_bins, min_tile_meters
+    )
+    num_seeds = int(len(seeds))
+    if num_seeds == 0:
+        seeds = np.array(
+            [[0.5 * (xmin + xmax), 0.5 * (ymin + ymax), 0.5 * (zmin + zmax)]],
+            dtype=np.float64,
         )
-        bin_ids[i] = int(ind[0])
+        num_seeds = 1
+
+    log.info(
+        "KD-tree seeds: %d points (%d x %d x %d grid), cap=%d",
+        num_seeds,
+        nx,
+        ny,
+        nz,
+        cap,
+    )
+
+    seed_pcd = o3d.geometry.PointCloud()
+    seed_pcd.points = o3d.utility.Vector3dVector(seeds)
+    tree = o3d.geometry.KDTreeFlann(seed_pcd)
+
+    bin_id = np.empty(n, dtype=np.int64)
+    for i in range(n):
+        pt = xyz[i]
+        _, ind, _ = tree.search_knn_vector_3d(pt, 1)
+        bin_id[i] = int(ind[0])
 
     z = xyz[:, 2]
-    return np.lexsort((z, bin_ids))
+    order = np.lexsort((z, bin_id))
+
+    counts = np.bincount(bin_id, minlength=num_seeds)
+    chunks: list[dict[str, int]] = []
+    start = 0
+    for b in range(num_seeds):
+        c = int(counts[b])
+        if c == 0:
+            continue
+        end = start + c
+        chunks.append(
+            {
+                "start": start,
+                "end": end,
+                "bin_id": b,
+                "point_count": c,
+            }
+        )
+        start = end
+
+    return order, chunks, num_seeds
 
 
 def _write_las(
@@ -378,23 +459,17 @@ def main() -> int:
         default="none",
         help=(
             "lex=XYZ sweep; spatial-xy=adaptive quadtree on XY; "
-            "uniform-xy=fixed grid; kd-tree=Open3D KDTreeFlann nearest-seed binning; none=no sorting (default: kd-tree)"
+            "uniform-xy=fixed grid; kd-tree=Open3D KDTreeFlann nearest-seed binning "
+            "(writes index.json beside -o); none=no sorting (default: kd-tree)"
         ),
     )
     parser.add_argument(
         "--target-points-per-tile",
         type=int,
-        default=None,
+        default=25000,
         metavar="N",
         help="Target max points per XY tile (quadtree leaf or uniform cell). "
         "Defaults to chunk_size from config.",
-    )
-    parser.add_argument(
-        "--max-quadtree-depth",
-        type=int,
-        default=64,
-        metavar="D",
-        help="Safety cap on partition depth (spatial-xy uses it directly; kd-tree uses it to cap seed bins).",
     )
     parser.add_argument(
         "--min-tile-meters",
@@ -426,7 +501,7 @@ def main() -> int:
     parser.add_argument(
         "--voxel-size",
         type=float,
-        default=0.1,
+        default=0.15,
         metavar="S",
         help="Voxel downsampling size passed to Open3D (default: 0.1).",
     )
@@ -447,13 +522,9 @@ def main() -> int:
     cfg.input_file = input_path
     cfg.reset_classification = False
 
-    target = (
-        args.target_points_per_tile
-        if args.target_points_per_tile is not None
-        else int(cfg.chunk_size)
-    )
+    target = args.target_points_per_tile
     if target <= 0:
-        print("--target-points-per-tile / chunk_size must be positive.", file=sys.stderr)
+        log.error("--target-points-per-tile / chunk_size must be positive.")
         return 1
 
     wrap = LasWrapper(cfg, auto_read_input_file=False)
@@ -485,6 +556,8 @@ def main() -> int:
     xyz = np.asarray(pcd.points)
 
     sort_mode = args.sort_mode
+    kd_num_seeds = 0
+    kd_chunks: list[dict[str, int]] = []
     if sort_mode == "lex":
         order = _lexsort_xyz(xyz)
         label = "XYZ lexicographic"
@@ -495,18 +568,21 @@ def main() -> int:
         order = _order_spatial_xy_quadtree(
             xyz,
             target_points=target,
-            max_depth=args.max_quadtree_depth,
+            max_depth=64,
             min_tile_meters=args.min_tile_meters,
         )
         label = f"spatial XY quadtree (target ~{target} pts/leaf)"
-    else:
-        order = _order_kdtree_index(
+    elif sort_mode == "kd-tree":
+        order, kd_chunks, kd_num_seeds = _order_kdtree_index(
             xyz,
             target_points=target,
-            max_depth=args.max_quadtree_depth,
+            max_depth=64,
             min_tile_meters=args.min_tile_meters,
         )
         label = f"kd-tree indexing (target ~{target} pts/leaf)"
+    else:
+        order = np.arange(len(xyz), dtype=np.int64)
+        label = "no sorting"
 
     if sort_mode != "none":
         log.debug("Sorting with %s", sort_mode)
@@ -524,6 +600,20 @@ def main() -> int:
         sort_mode=sort_mode,
         write_segmentor_vlr=not args.no_segmentor_vlr,
     )
+
+    if sort_mode == "kd-tree":
+        index_path = Path(output_path).parent / "index.json"
+        index_payload = {
+            "sort_mode": sort_mode,
+            "target_points_per_tile": target,
+            "num_seeds": kd_num_seeds,
+            "chunks": kd_chunks,
+        }
+        index_path.write_text(
+            json.dumps(index_payload, indent=2),
+            encoding="utf-8",
+        )
+        log.info("Wrote spatial bin index to %s", index_path)
 
     print(f"Wrote {len(xyz):,} points ({label}) to {output_path}")
     return 0

@@ -36,11 +36,9 @@ class SegmentorConfig:
     }
     ceiling_segmentation: dict = {
         "enable": False,
-        "epsilon": 0.01,
-        "min_support_points": 2000,
+        "distance_threshold": 0.01,
+        "num_iterations": 1000,
         "max_tilt_from_horizontal_deg": 10.0,
-        "max_iterations": 1000,
-        "min_plane_size_ratio": 0.01,
         "min_height_above_ground": 2.0,
         "max_height_above_ground": 10.0,
     }

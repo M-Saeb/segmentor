@@ -3,21 +3,17 @@ from .base import InputLayout
 
 
 PARAM_CONFIG = {
-    "epsilon": {"label": "Epsilon", "visible": True},
-    "min_support_points": {"label": "Min support points", "visible": True},
+    "distance_threshold": {"label": "Distance threshold", "visible": True},
+    "num_iterations": {"label": "Num iterations", "visible": True},
     "max_tilt_from_horizontal_deg": {"label": "Max tilt from horizontal (deg)", "visible": True},
-    "max_iterations": {"label": "Max iterations", "visible": True},
-    "min_plane_size_ratio": {"label": "Min plane size ratio", "visible": True},
     "min_height_above_ground": {"label": "Min height above ground", "visible": True},
     "max_height_above_ground": {"label": "Max height above ground", "visible": True},
 }
 
 KEY_ORDER = [
-    "epsilon",
-    "min_support_points",
+    "distance_threshold",
+    "num_iterations",
     "max_tilt_from_horizontal_deg",
-    "max_iterations",
-    "min_plane_size_ratio",
     "min_height_above_ground",
     "max_height_above_ground",
 ]
