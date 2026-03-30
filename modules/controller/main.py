@@ -52,8 +52,6 @@ class Controller:
         wall_cfg = getattr(self.config, "wall_segmentation", {})
         if wall_cfg.get("enable", False):
             new_pipeline.stages.append(self._make_wall_segmentation_stage())
-            if wall_cfg.get("filter_noise_after_segmenetation", False):
-                new_pipeline.stages.append(self._make_post_segmentation_noise_filter_stage())
 
         objects_cfg = getattr(self.config, "objects_segmentation", {})
         if objects_cfg.get("enable", False):
@@ -126,22 +124,6 @@ class Controller:
                 **kwargs,
             ),
             params=params,
-        )
-
-    def _make_post_segmentation_noise_filter_stage(self) -> PipelineStage:
-        # Reuse the same defaults as the initial noise filter.
-        default_nb_neighbors = 20
-        default_std_ratio = 2.0
-        return PipelineStage(
-            name=constants.PIPELINE_POST_SEGMENTATION_NOISE_FILTER,
-            func=lambda **kwargs: self._pipeline_functions_wrapper(
-                pcd_tools.filter_noise_for_none_classified_points,
-                **kwargs,
-            ),
-            params={
-                "nb_neighbors": default_nb_neighbors,
-                "std_ratio": default_std_ratio,
-            },
         )
 
     def _make_objects_segmentation_stage(self) -> PipelineStage:
@@ -323,8 +305,6 @@ class Controller:
             func = self._process_ceiling_segmentation_stage
         elif name == constants.PIPELINE_WALL_SEGMENTATION:
             func = self._process_wall_segmentation_stage
-        elif name == constants.PIPELINE_POST_SEGMENTATION_NOISE_FILTER:
-            func = self._process_post_segmentation_noise_filter_stage
         elif name == constants.PIPELINE_OBJECTS_SEGMENTATION:
             func = self._process_objects_segmentation_stage
         else:
@@ -351,13 +331,6 @@ class Controller:
 
     def _process_wall_segmentation_stage(self, pcd, points_attributes, **kwargs):
         return pcd_tools.apply_wall_segmentation(
-            pcd,
-            points_attributes,
-            **kwargs
-        )
-
-    def _process_post_segmentation_noise_filter_stage(self, pcd, points_attributes, **kwargs):
-        return pcd_tools.filter_noise_for_none_classified_points(
             pcd,
             points_attributes,
             **kwargs

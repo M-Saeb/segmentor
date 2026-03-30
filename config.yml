@@ -34,7 +34,6 @@ ceiling_segmentation:
 
 wall_segmentation:
   enable: true
-  filter_noise_after_segmenetation: true
   rotation_threshold: 0.9
 
 objects_segmentation:

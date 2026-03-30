@@ -47,7 +47,6 @@ class SegmentorConfig:
     }
     wall_segmentation: dict = {
         "enable": False,
-        "filter_noise_after_segmenetation": True,
         "rotation_threshold": 0.9,
     }
     objects_segmentation: dict = {
