@@ -15,7 +15,10 @@ log = get_dual_logger(__name__)
 class Controller:
     def __init__(self, config: SegmentorConfig, *, require_setup_pipeline: bool = True):
         self.config = config
-        self.las_wrapper = LasWrapper(config, auto_read_input_file=True)
+        self.las_wrapper = LasWrapper(config)
+        # Initialize preview state (chunk index 0) for setup pipeline.
+        if not self.las_wrapper.iterate_chunk(0):
+            log.warning("Could not initialize LasWrapper preview chunk; input may be empty.")
         self.output_folder_path = result_generator.init_result_folder_path(config)
         self.full_las_path = result_generator.get_output_las_path(self.output_folder_path)
         self.output_las_writer = None

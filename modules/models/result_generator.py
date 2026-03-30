@@ -51,7 +51,7 @@ def create_pipeline_yaml_file(result_folder_path: str, pipeline_data: dict) -> s
 
 def create_las_output_file(cfg: config.SegmentorConfig, output_las_path: str) -> LasWrapper:
     """Initialize output LAS file and return writer wrapper."""
-    las_writer = LasWrapper(cfg, auto_read_input_file=False)
+    las_writer = LasWrapper(cfg)
     las_writer.initialize_output_file(output_las_path)
     return las_writer
 

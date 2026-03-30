@@ -372,7 +372,7 @@ def main() -> int:
         print("min_points must be >= 2.", file=sys.stderr)
         return 1
 
-    wrap = LasWrapper(cfg, auto_read_input_file=False)
+    wrap = LasWrapper(cfg)
     xyz, merged_attrs = _merge_chunks(wrap)
 
     try:

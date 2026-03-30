@@ -323,7 +323,7 @@ def run_script(
     config: SegmentorConfig,
 ) -> int:
 
-    wrap = LasWrapper(config, auto_read_input_file=False)
+    wrap = LasWrapper(config)
 
     pcd, merged_attrs = _merge_chunks(wrap)
     log.info("Initial point count: %d", len(pcd.points))

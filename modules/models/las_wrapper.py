@@ -9,23 +9,19 @@ log = log_utils.get_dual_logger(__name__)
   
 class LasWrapper:
 
-    def __init__(self, config: config.SegmentorConfig, auto_read_input_file: bool = True):
+    def __init__(self, config: config.SegmentorConfig):
         """
         High-level wrapper around LAS I/O and chunk iteration.
 
         Args:
             config: Parsed `SegmentorConfig` holding input path, chunk size, and
                 behavior flags such as `reset_classification`.
-            auto_read_input_file: When True, immediately creates an iterator
-                over input chunks and loads the first chunk into
-                `self.current_chunk`. When False, the caller is responsible for
-                driving `iter_input_chunks()` manually.
         """
         self.config = config
-        if auto_read_input_file:
-            self._chunk_index = 0
-            self._total_chunks = self._compute_total_chunks()
-            self.current_chunk = self._load_chunk_at_index(self._chunk_index)
+        # Preview navigation state (loaded lazily via iterate_chunk()).
+        self._chunk_index = 0
+        self._total_chunks = None
+        self.current_chunk = None
         log.debug("Chunk size set to: %d", self.config.chunk_size)
         log.debug("Reset classification is set to: %s", self.config.reset_classification)
 
@@ -69,8 +65,9 @@ class LasWrapper:
             True if the current chunk changed, False if the target index is
             out of range (e.g. no next/previous chunk).
         """
-        if not getattr(self, "_total_chunks", None):
-            log.warning("iterate_chunk: input chunks are not loaded")
+        if self._total_chunks is None:
+            self._total_chunks = self._compute_total_chunks()
+        if self._total_chunks <= 0:
             return False
         new_index = self._chunk_index + delta
         if new_index < 0 or new_index >= self._total_chunks:
@@ -143,6 +140,11 @@ class LasWrapper:
         return pcd, points_attributes
 
     def get_current_chunk(self):
+        if self.current_chunk is None:
+            raise RuntimeError(
+                "LasWrapper current chunk is not initialized. "
+                "Call iterate_chunk(0) once before using get_current_chunk()."
+            )
         return self.current_chunk
 
     def set_current_chunk(self, pcd, points_attributes):
