@@ -3,7 +3,7 @@ from typing import Dict
 from modules.utils.config import SegmentorConfig
 from modules.utils.pipeline import PipelineStage, Pipeline
 from modules.models.las_wrapper import LasWrapper
-from modules.models import result_generator
+from modules.models import output_tools
 from modules.models import pcd_tools
 from modules.utils.log_utils import get_dual_logger
 from modules.utils import constants
@@ -19,8 +19,8 @@ class Controller:
         # Initialize preview state (chunk index 0) for setup pipeline.
         if not self.las_wrapper.iterate_chunk(0):
             log.warning("Could not initialize LasWrapper preview chunk; input may be empty.")
-        self.output_folder_path = result_generator.init_result_folder_path(config)
-        self.full_las_path = result_generator.get_output_las_path(self.output_folder_path)
+        self.output_folder_path = output_tools.init_result_folder_path(config)
+        self.full_las_path = output_tools.get_output_las_path(self.output_folder_path)
         self.output_las_writer = None
         if require_setup_pipeline:
             self.setup_pipeline = self._create_setup_pipeline()
@@ -360,12 +360,12 @@ class Controller:
         if self.process_pipeline is None or not self.process_pipeline.stages:
             return
 
-        result_generator.create_pipeline_yaml_file(
+        output_tools.create_pipeline_yaml_file(
             self.output_folder_path,
             self.process_pipeline.to_dict(),
         )
 
-        self.output_las_writer = result_generator.create_las_output_file(
+        self.output_las_writer = output_tools.create_las_output_file(
             self.config,
             self.full_las_path,
         )
@@ -381,7 +381,7 @@ class Controller:
                     **stage_kwargs,
                 )
 
-            result_generator.write_las_chunk_to_output_file(
+            output_tools.write_las_chunk_to_output_file(
                 self.output_las_writer,
                 self.full_las_path,
                 index,

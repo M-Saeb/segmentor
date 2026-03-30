@@ -316,7 +316,7 @@ class Viewer:
         #         if error_holder[0] is not None:
         #             self.show_message("Error", error_holder[0])
         #         else:
-        #             path = self.controller.result_generator.full_las_path
+        #             path = self.controller.output_tools.full_las_path
         #             # After the user acknowledges the success dialog, exit the GUI.
         #             self._exit_after_message = True
         #             self.show_message("Done", f"Output written to {path}")
