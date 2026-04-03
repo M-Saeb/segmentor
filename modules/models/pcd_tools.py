@@ -354,7 +354,10 @@ def ransac_floor_segmentation(
 
         if is_floor:
             classification[orig_indices[inliers_arr]] = constants.PCB_CLASSIFICATION_GROUND
-            floor_planes.append(plane_model)
+            floor_planes.append({
+                "plane_model": plane_model,
+                "pcd": remain_pcd.select_by_index(inliers),
+            })
 
         if len(remain_pcd.points) <= 3:
             log.debug("RANSAC floor segmentation: no more points to segment")
@@ -773,32 +776,30 @@ def segment_objects_dbscan(pcd, points_attributes, eps, min_points):
         )
         return pcd, points_attributes
 
-    unclassified_mask = classification == constants.PCB_CLASSIFICATION_INIT
-    n_unclassified = int(np.sum(unclassified_mask))
-    if n_unclassified == 0:
-        log.info("No unclassified points for DBSCAN object segmentation; skipping.")
-        return pcd, points_attributes
-
-    unclassified_indices = np.where(unclassified_mask)[0]
-    subset_pcd = pcd.select_by_index(unclassified_indices)
+    # Run DBSCAN on the full point cloud, matching the core behavior of sandbox.segment_objects
+    # but still only assigning PCB_CLASSIFICATION_OBJECTS to points that are currently INIT.
     labels = np.asarray(
-        subset_pcd.cluster_dbscan(eps=eps, min_points=min_points, print_progress=False)
+        pcd.cluster_dbscan(eps=eps, min_points=min_points, print_progress=False)
     )
+    if labels.size == 0:
+        log.info("DBSCAN produced no labels; skipping object segmentation.")
+        return pcd, points_attributes
 
     clustered_mask = _dbscan_cluster_mask(labels)
     n_clustered = int(np.sum(clustered_mask))
     n_noise = int(np.sum(~clustered_mask))
     log.info(
-        "DBSCAN on %d unclassified points: %d clustered, %d noise (-1).",
-        n_unclassified,
+        "DBSCAN on %d points: %d clustered, %d noise (-1).",
+        num_points,
         n_clustered,
         n_noise,
     )
     if n_clustered == 0:
         return pcd, points_attributes
 
-    global_object_indices = unclassified_indices[clustered_mask]
     classification = classification.copy()
+    init_mask = classification == constants.PCB_CLASSIFICATION_INIT
+    global_object_indices = np.where(clustered_mask & init_mask)[0]
     classification[global_object_indices] = constants.PCB_CLASSIFICATION_OBJECTS
 
     # Sequential cluster ids 1..K for each DBSCAN cluster (Open3D labels may be non-contiguous).
@@ -808,10 +809,10 @@ def segment_objects_dbscan(pcd, points_attributes, eps, min_points):
     for raw in sorted(np.unique(labels[labels >= 0])):
         raw_to_seq[int(raw)] = seq
         seq += 1
-    for i, gidx in enumerate(unclassified_indices):
-        lab = int(labels[i])
+    for idx, lab in enumerate(labels):
+        lab = int(lab)
         if lab >= 0:
-            object_cluster_id[gidx] = raw_to_seq[lab]
+            object_cluster_id[idx] = raw_to_seq[lab]
 
     points_attributes["classification"] = classification
     points_attributes["object_cluster_id"] = object_cluster_id

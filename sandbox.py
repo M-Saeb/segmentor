@@ -1,23 +1,96 @@
 import open3d as o3d
-import matplotlib.pyplot as plt
+import json
 import laspy
 import numpy as np
+from toolbox.read_las_file import read_whole_las_file
+from modules.utils import config
+from modules.models.las_wrapper import LasWrapper
 from toolbox.density import get_inlier_density
+from toolbox.ai_tools import get_plane_id_from_ai
+from toolbox.video_render import render_rotating_isometric_video
+from toolbox.restore_origina_pcd import restore_original_points_in_inliers
+
+LAS_FILE_PATH = "/tmp/las/data.las"
 
 
-def read_las_file(file_path):
-    with laspy.open(file_path) as las:
-        for point in las.chunk_iterator(100_000):
-            xyz = np.vstack((point.x, point.y, point.z)).T
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(xyz)
-            return pcd
+def display_pcd_in_rgb():
+    las = laspy.read(LAS_FILE_PATH)
+    pcd = o3d.geometry.PointCloud()
+    xyz = np.vstack((las.x, las.y, las.z)).T.astype(float)
+    pcd.points = o3d.utility.Vector3dVector(xyz)
+
+    red = np.asarray(las.red, dtype=float)
+    green = np.asarray(las.green, dtype=float)
+    blue = np.asarray(las.blue, dtype=float)
+    rgb = np.vstack((red, green, blue)).T
+    max_val = np.max(rgb)
+    if max_val > 0:
+        rgb /= max_val  # normalize to [0, 1] like PCDPreviewer.apply_rgb_colors()
+    pcd.colors = o3d.utility.Vector3dVector(rgb)
+
+    draw_geometries_with_light_blue_background([pcd])
+
+
+def draw_geometries_with_light_blue_background(
+    geometries,
+    window_name: str = "Open3D",
+):
+    """
+    Wrapper around Open3D's Visualizer that shows geometries on a light blue background.
+    """
+    vis = o3d.visualization.Visualizer()
+    vis.create_window(window_name=window_name)
+    for g in geometries:
+        vis.add_geometry(g)
+    opt = vis.get_render_option()
+    opt.background_color = np.array([0.8, 0.9, 1.0])
+    vis.run()
+    vis.destroy_window()
+
+
+def restore_inlier_rgb_from_las(pcd_inliers: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
+    """
+    Given a point-cloud of inliers and the original LAS/LAZ file, return a new
+    point-cloud with RGB colors restored from the source LAS.
+
+    The mapping is done via nearest-neighbour in XYZ space: for each inlier
+    point, we find the closest point in the original LAS and copy its RGB.
+    """
+    las = laspy.read(LAS_FILE_PATH)
+    xyz = np.vstack((las.x, las.y, las.z)).T.astype(np.float64)
+    red = np.asarray(las.red, dtype=float)
+    green = np.asarray(las.green, dtype=float)
+    blue = np.asarray(las.blue, dtype=float)
+    rgb = np.vstack((red, green, blue)).T.astype(np.float64)
+    max_val = np.max(rgb)
+    if max_val > 0:
+        rgb /= max_val  # normalize to [0, 1] like display_pcd_in_rgb / PCDPreviewer
+
+    source_pcd = o3d.geometry.PointCloud()
+    source_pcd.points = o3d.utility.Vector3dVector(xyz)
+    source_pcd.colors = o3d.utility.Vector3dVector(rgb)
+
+    tree = o3d.geometry.KDTreeFlann(source_pcd)
+    inlier_points = np.asarray(pcd_inliers.points, dtype=np.float64)
+    if inlier_points.size == 0:
+        return pcd_inliers
+
+    source_colors = np.asarray(source_pcd.colors)
+    restored_colors = np.empty((len(inlier_points), 3), dtype=np.float64)
+    for i, pt in enumerate(inlier_points):
+        _, idx, _ = tree.search_knn_vector_3d(pt, 1)
+        restored_colors[i] = source_colors[idx[0]]
+
+    out = o3d.geometry.PointCloud(pcd_inliers)
+    out.colors = o3d.utility.Vector3dVector(restored_colors)
+    return out
+
 
 def write_las_file(file_path, points):
     with laspy.open(file_path, 'w') as las:
         las.points = points
 
-def is_facing_up(plane, threshold=0.95):
+def is_facing_up(plane, threshold=0.95, debug=False):
     a, b, c, d = plane
     normal = np.array([a, b, c])
     
@@ -25,6 +98,9 @@ def is_facing_up(plane, threshold=0.95):
     normal_unit = normal / np.linalg.norm(normal)
     
     # Check if Z component is close to 1 (facing up) or -1 (facing down)
+    if debug:
+        print(f"threshold: {threshold}")
+        print(f"abs(normal_unit[2]): {abs(normal_unit[2])}")
     return abs(normal_unit[2]) > threshold
 
 def is_facing_side(plane, threshold=0.9):
@@ -34,7 +110,7 @@ def is_facing_side(plane, threshold=0.9):
     result = abs(normal[2]) < (1 - threshold )
     return result
 
-def planes_footprint_overlap_xy(pcd_a, pcd_b, padding=0.0, min_overlap_area_m2=0.0):
+def planes_footprint_overlap_xy(pcd_a, pcd_b, padding=0.0, min_overlap_area_m2=0.0, debug=False):
     pts_a = np.asarray(pcd_a.points)
     pts_b = np.asarray(pcd_b.points)
     if pts_a.size == 0 or pts_b.size == 0:
@@ -55,25 +131,35 @@ def planes_footprint_overlap_xy(pcd_a, pcd_b, padding=0.0, min_overlap_area_m2=0
         return False
     area = (x1 - x0) * (y1 - y0)
     result = area >= min_overlap_area_m2
-    if result:
-        print("area", area)
-        o3d.visualization.draw_geometries([pcd_a, pcd_b])
+    if debug:
+        print(f"Checking if planes footprint overlap xy")
+        print(f"area: {area}")
+        print(f"min_overlap_area_m2: {min_overlap_area_m2}")
+        print(f"result: {result}")
     return result
 
-def is_floor_check(plane_model, pcd, all_floor_plane_data):
+def is_floor_check(plane_model, pcd, all_floor_plane_data, debug=False):
+    if debug:
+        print(f"=== starting floor check ===")
     current_plane_z_intercept = -plane_model[3] / plane_model[2]   # -d1 / c1
-    if not is_facing_up(plane_model):
+    if not is_facing_up(plane_model, debug=debug):
         return False
     for item in all_floor_plane_data:
         floor_plane_normal = item["plane_model"]
         floor_plane_z_intercept = -floor_plane_normal[3] / floor_plane_normal[2]   # -d1 / c1
-        z_difference = current_plane_z_intercept - floor_plane_z_intercept
-        is_above = z_difference > 0.3
+        z_difference = abs(current_plane_z_intercept - floor_plane_z_intercept)
+        is_above = z_difference > 0.2
+        if debug:
+            print(f"z_difference: {z_difference}")
+            print(f"is_above: {is_above}")
+            print(f"floor plane z_intercept: {floor_plane_z_intercept}")
+            print(f"current plane z_intercept: {current_plane_z_intercept}")
         if not is_above:
             continue
         is_colliding = planes_footprint_overlap_xy(
             pcd, item["pcd"],
-            min_overlap_area_m2=1
+            min_overlap_area_m2=1,
+            debug=debug
         )
         if is_colliding:
             return False
@@ -82,26 +168,26 @@ def is_floor_check(plane_model, pcd, all_floor_plane_data):
 def is_wall_check(plane_model, pcd_inlier, all_wall_plane_data):
     point_array = np.asarray(pcd_inlier.points)
     inlier_indices = np.arange(len(point_array))
-    density = get_inlier_density(point_array, inlier_indices, plane_model, visualize=False)
+    density = get_inlier_density(point_array, inlier_indices, plane_model)
     # if density < 30:
     #     return False
     is_facing_correct = is_facing_side(plane_model)
     return is_facing_correct
 
-def is_cieling_check(plane_model, pcd_inlier, all_cieling_plane_data):
+def is_cieling_check(plane_model, pcd_inlier, all_cieling_plane_data, debug=False):
     point_array = np.asarray(pcd_inlier.points)
     inlier_indices = np.arange(len(point_array))
-    density = get_inlier_density(point_array, inlier_indices, plane_model, visualize=False)
-    if density < 30:
+    density = get_inlier_density(point_array, inlier_indices, plane_model, debug=debug)
+    if density < 15:
         return False
     is_facing_correct = is_facing_up(plane_model)
     return is_facing_correct
 
-def is_other_structure_check(plane_model, pcd_inlier, all_other_structure_plane_data):
+def is_other_structure_check(plane_model, pcd_inlier, debug=False):
     point_array = np.asarray(pcd_inlier.points)
     inlier_indices = np.arange(len(point_array))
-    density = get_inlier_density(point_array, inlier_indices, plane_model, visualize=True)
-    return density > 30
+    density = get_inlier_density(point_array, inlier_indices, plane_model, debug=debug)
+    return density > 15
 
 def get_red_colors(i):
     red_grade = i * 0.01
@@ -127,7 +213,7 @@ def get_purple_colors(i):
     purple_grade = i * 0.01
     return [ 1 - purple_grade, 0.0, 1 - purple_grade]
 
-def segment_ground(pcd, visualize=False):
+def segment_ground(pcd, debug=False):
     floor_plane_data = []
     other_planes_data = []
     remain_pcd = pcd
@@ -140,7 +226,7 @@ def segment_ground(pcd, visualize=False):
 
         pcd_inliers = remain_pcd.select_by_index(inliers)
 
-        is_floor = is_floor_check(plane_model, pcd_inliers, floor_plane_data)
+        is_floor = is_floor_check(plane_model, pcd_inliers, floor_plane_data, debug=debug)
 
         remain_pcd = remain_pcd.select_by_index(inliers, invert=True)
         if len(remain_pcd.points) <= 3:
@@ -161,7 +247,7 @@ def segment_ground(pcd, visualize=False):
                 "pcd": pcd_inliers
             })
 
-        if visualize:
+        if debug:
             color = get_green_colors(i) if is_floor else get_orange_colors(i)
             display_pcd = o3d.geometry.PointCloud(pcd_inliers.points)
             display_pcd.paint_uniform_color(color)
@@ -177,7 +263,7 @@ def segment_ground(pcd, visualize=False):
 
     return floor_plane_data, remain_pcd
 
-def segment_walls(pcd):
+def segment_walls(pcd, debug=False):
     wall_plane_data = []
     other_planes_data = []
     remain_pcd = pcd
@@ -197,13 +283,6 @@ def segment_walls(pcd):
         pcd_inliers.paint_uniform_color(pcd_color)
         is_wall = is_wall_check(plane_model, pcd_inliers, wall_plane_data)
 
-        # o3d.visualization.draw_geometries(
-        #     [pcd_inliers] + \
-        #     [p["pcd"] for p in wall_plane_data] + \
-        #     [p["pcd"] for p in other_planes_data] + \
-        #     [remain_pcd]
-        # )
-
         if is_wall:
             pcd_color = get_green_colors(i)
             pcd_inliers.paint_uniform_color(pcd_color)
@@ -219,12 +298,23 @@ def segment_walls(pcd):
                 "pcd": pcd_inliers
             })
 
+        if debug:
+            display_pcd = o3d.geometry.PointCloud(pcd_inliers.points)
+            color = get_orange_colors(i) if is_wall else get_purple_colors(i)
+            display_pcd.paint_uniform_color(color)
+            o3d.visualization.draw_geometries(
+                [p["pcd"] for p in wall_plane_data] + \
+                [p["pcd"] for p in other_planes_data] + \
+                [remain_pcd] + \
+                [display_pcd]
+            )
+
     for p in other_planes_data:
         remain_pcd += p["pcd"]	
 
     return wall_plane_data, remain_pcd
 
-def cieling_segmentation(pcd):
+def cieling_segmentation(pcd, debug=False):
     cieling_plane_data = []
     other_planes_data = []
     remain_pcd = pcd
@@ -236,7 +326,7 @@ def cieling_segmentation(pcd):
         )
 
         pcd_inliers = remain_pcd.select_by_index(inliers)
-        is_cieling = is_cieling_check(plane_model, pcd_inliers, cieling_plane_data)
+        is_cieling = is_cieling_check(plane_model, pcd_inliers, cieling_plane_data, debug=debug)
         remain_pcd = remain_pcd.select_by_index(inliers, invert=True)
         if len(remain_pcd.points) <= 3:
             break
@@ -256,12 +346,23 @@ def cieling_segmentation(pcd):
                 "pcd": pcd_inliers
             })
 
+        if debug:
+            display_pcd = o3d.geometry.PointCloud(pcd_inliers.points)
+            color = get_orange_colors(i) if is_cieling else get_purple_colors(i)
+            display_pcd.paint_uniform_color(color)
+            o3d.visualization.draw_geometries(
+                [p["pcd"] for p in cieling_plane_data] + \
+                [p["pcd"] for p in other_planes_data] + \
+                [remain_pcd] + \
+                [display_pcd]
+            )
+
     for p in other_planes_data:
         remain_pcd += p["pcd"]	
 
     return cieling_plane_data, remain_pcd
 
-def other_structure_segmentation(pcd):
+def other_structure_segmentation(pcd, debug=False):
     other_structure_plane_data = []
     other_planes_data = []
     remain_pcd = pcd
@@ -273,7 +374,7 @@ def other_structure_segmentation(pcd):
         )
 
         pcd_inliers = remain_pcd.select_by_index(inliers)
-        is_other_structure = is_other_structure_check(plane_model, pcd_inliers, other_structure_plane_data)
+        is_other_structure = is_other_structure_check(plane_model, pcd_inliers, debug=debug)
         remain_pcd = remain_pcd.select_by_index(inliers, invert=True)
         if len(remain_pcd.points) <= 3:
             break
@@ -298,8 +399,8 @@ def other_structure_segmentation(pcd):
 
     return other_structure_plane_data, remain_pcd
 
-def segment_objects(pcd, visualize=False):
-    labels = np.asarray(pcd.cluster_dbscan(eps=0.3, min_points=30, print_progress=False))
+def segment_objects(pcd, debug=False):
+    labels = np.asarray(pcd.cluster_dbscan(eps=0.4, min_points=15, print_progress=False))
     if labels.size == 0:
         return [], pcd
 
@@ -311,11 +412,29 @@ def segment_objects(pcd, visualize=False):
         if indices.size == 0:
             continue
         cluster_pcd = pcd.select_by_index(indices)
-        color = get_purple_colors(i % 100)
-        cluster_pcd.paint_uniform_color(color)
+        cluster_pcd = restore_inlier_rgb_from_las(cluster_pcd)
+        cluster_pcd = restore_original_points_in_inliers(
+            cluster_pcd,
+            "/home/mohammedalsalihi/LidarData/for_mohammed/fh_underground.las",
+            voxel_size=0.15,
+        )
+        draw_geometries_with_light_blue_background([cluster_pcd])
+        to_render = input("to render? (y/n)")
+        if to_render == "y":
+            render_rotating_isometric_video(cluster_pcd, "temp/video.mp4", fps=10)
+        # plane_id = get_plane_id_from_ai(
+        #     cluster_pcd,
+        #     remain_pcd=pcd.select_by_index(indices, invert=True),
+        #     debug=debug
+        # )
 
-        if visualize:
-            o3d.visualization.draw_geometries([cluster_pcd])
+
+        if debug:
+            display_pcd = o3d.geometry.PointCloud(pcd.points)
+            display_pcd.paint_uniform_color([0.5, 0.5, 0.5])# grey
+            o3d.visualization.draw_geometries(
+                [display_pcd] + [cluster_pcd]
+            )
 
         objects_pcds.append(cluster_pcd)
         all_cluster_indices.extend(indices.tolist())
@@ -323,18 +442,48 @@ def segment_objects(pcd, visualize=False):
     remain_pcd = pcd.select_by_index(all_cluster_indices, invert=True)
     return objects_pcds, remain_pcd
 
-pcd = read_las_file("/home/mohammedalsalihi/LidarData/for_mohammed/output.las")
+def get_chunk_sizes(file_path: str) -> np.ndarray:
+    with open(file_path, 'r') as file:
+        data = json.load(file)
+    return data["chunks"]
+
+def kd_tree(pcd: o3d.geometry.PointCloud) -> np.ndarray:
+    chunks_data = get_chunk_sizes("/tmp/las/index.json")
+    for chunk in chunks_data:
+        start = chunk["start"]
+        end = chunk["end"]
+        chunk_pcd = pcd.select_by_index(list(range(start, end)))
+        yield chunk_pcd
+
+
+config = config.SegmentorConfig("config.yml")
+
+pcd = read_whole_las_file(LAS_FILE_PATH)
 pcd_color = [0.5, 0.5, 0.5] # gray
 pcd.paint_uniform_color(pcd_color)
-floor_plane_data, remain_pcd = segment_ground(pcd, visualize=False)
-wall_plane_data, remain_pcd = segment_walls(remain_pcd)
-cieling_plane_data, remain_pcd = cieling_segmentation(remain_pcd)
-# other_structure_plane_data, remain_pcd = other_structure_segmentation(remain_pcd)
-# objects_pcd, remain_pcd = segment_objects(remain_pcd, visualize=False)
-o3d.visualization.draw_geometries(
-    [p["pcd"] for p in floor_plane_data] + \
-    [p["pcd"] for p in wall_plane_data] + \
-    [p["pcd"] for p in cieling_plane_data] + \
-    # objects_pcd + \
-    [remain_pcd]
-)
+all_new_pcd = o3d.geometry.PointCloud()
+for index, chunk_pcd in enumerate(kd_tree(pcd)):
+    print(f"Processing chunk {index + 1}")
+    new_chunk_pcd = o3d.geometry.PointCloud()
+    floor_plane_data, remain_pcd = segment_ground(chunk_pcd, debug=False)
+    wall_plane_data, remain_pcd = segment_walls(remain_pcd)
+    cieling_plane_data, remain_pcd = cieling_segmentation(remain_pcd, debug=False)
+    # other_structure_plane_data, remain_pcd = other_structure_segmentation(remain_pcd, debug=True)
+    objects_pcd, remain_pcd = segment_objects(remain_pcd, debug=False)
+    new_chunk_pcd += remain_pcd
+    for p in floor_plane_data:
+        new_chunk_pcd += p["pcd"]
+    for p in wall_plane_data:
+        new_chunk_pcd += p["pcd"]
+    for p in cieling_plane_data:
+        new_chunk_pcd += p["pcd"]
+    # for p in other_structure_plane_data:
+    #     new_chunk_pcd += p["pcd"]
+    for p in objects_pcd:
+        new_chunk_pcd += p
+    all_new_pcd += new_chunk_pcd
+
+    o3d.visualization.draw_geometries([new_chunk_pcd])
+
+
+o3d.visualization.draw_geometries([all_new_pcd])
