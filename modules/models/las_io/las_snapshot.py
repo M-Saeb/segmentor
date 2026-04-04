@@ -12,10 +12,10 @@ class LasSnapshot:
     def __init__(self, original_header: laspy.LasHeader):
         self.id = random.randint(0, 10000)
         self.path = tempfile.mktemp(prefix="snapshot_", suffix=f"_{self.id}.las")
-        self.las_header = self._create_new_las_filer_header(original_header)
+        self.las_header = self._create_new_las_header(original_header)
 
 
-    def _create_new_las_filer_header(self, original_header):
+    def _create_new_las_header(self, original_header):
         new_header = laspy.LasHeader(
             point_format=original_header.point_format,
             version=original_header.version

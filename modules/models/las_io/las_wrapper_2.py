@@ -3,7 +3,7 @@ import hashlib
 import laspy
 import open3d as o3d
 import numpy as np
-from modules.utils import log_utils, config
+from modules.utils import log_utils, config, constants
 from .las_snapshot import LasSnapshot
 from .las_iterator import LasIteratorBasic
 
@@ -20,6 +20,7 @@ class LasWrapper2:
         """
         self.input_file = config.input_file
         self.chunk_size = config.chunk_size
+        self.reset_classification = config.reset_classification
         # Preview navigation state (loaded lazily via iterate_chunk()).
         self._las_iterator = LasIteratorBasic(self.input_file, self.chunk_size)
         self.current_chunk = None
@@ -36,6 +37,16 @@ class LasWrapper2:
         raw_string = "\n".join(items)
         return hashlib.sha256(raw_string.encode()).hexdigest()
 
+
+    def _reset_classification_if_needed(self, points_attributes):
+        if self.reset_classification:
+            points_attributes['classification'] = np.full(
+                len(points_attributes['classification']),
+                constants.PCB_CLASSIFICATION_INIT,
+                dtype=np.uint8
+            )
+        return points_attributes
+
     def iterate_chunk(self, delta: int) -> bool:
         """
         Move `current_chunk` forward or backward along input chunks.
@@ -51,7 +62,9 @@ class LasWrapper2:
         ok = self._las_iterator.iterate_chunk(delta)
         if not ok:
             return False
-        self.current_chunk = self._las_iterator.get_current_chunk()
+        pcd, points_attributes = self._las_iterator.get_current_chunk()
+        points_attributes = self._reset_classification_if_needed(points_attributes)
+        self.current_chunk = pcd, points_attributes
         return True
 
     def _get_original_las_header(self):
@@ -110,6 +123,7 @@ class LasWrapper2:
         index = 0
         while self._las_iterator.iterate_chunk(delta=(0 if index == 0 else 1)):
             pcd, points_attributes = self._las_iterator.get_current_chunk()
+            points_attributes = self._reset_classification_if_needed(points_attributes)
             yield index, pcd, points_attributes
             index += 1
 
