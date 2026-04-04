@@ -3,7 +3,7 @@ import hashlib
 import laspy
 import open3d as o3d
 import numpy as np
-from modules.utils import log_utils, config, constants
+from modules.utils import log_utils, config
 from .las_snapshot import LasSnapshot
 from .las_iterator import LasIteratorBasic
 
@@ -16,16 +16,15 @@ class LasWrapper2:
         High-level wrapper around LAS I/O and chunk iteration.
 
         Args:
-            config: Parsed `SegmentorConfig` holding input path, chunk size, and
-                behavior flags such as `reset_classification`.
+            config: Parsed `SegmentorConfig` holding input path, chunk size.
         """
-        self.config = config
+        self.input_file = config.input_file
+        self.chunk_size = config.chunk_size
         # Preview navigation state (loaded lazily via iterate_chunk()).
-        self._las_iterator = LasIteratorBasic(config.input_file, config.chunk_size)
+        self._las_iterator = LasIteratorBasic(self.input_file, self.chunk_size)
         self.current_chunk = None
         self.snapshot = LasSnapshot(self._get_original_las_header())
-        log.debug("Chunk size set to: %d", self.config.chunk_size)
-        log.debug("Reset classification is set to: %s", self.config.reset_classification)
+        log.debug("Chunk size set to: %d", self.chunk_size)
 
     def genrate_unique_id(self) -> str:
         """Read the meta data of the LAS to generate a unique id for the file.
@@ -56,7 +55,7 @@ class LasWrapper2:
         return True
 
     def _get_original_las_header(self):
-        with laspy.open(self.config.input_file) as las:
+        with laspy.open(self.input_file) as las:
             return las.header
 
     def _create_new_las_filer_header(self):

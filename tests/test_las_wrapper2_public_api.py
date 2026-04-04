@@ -49,7 +49,7 @@ def _make_wrapper(tmp_path, tiny_las_path, chunk_size: int = 30, reset_classific
 
 def test_init_sets_config_and_chunk_state(tmp_path, tiny_las_path):
     w = _make_wrapper(tmp_path, tiny_las_path)
-    assert w.config.input_file == str(tiny_las_path)
+    assert w.input_file == str(tiny_las_path)
     assert w.current_chunk is None
     assert w._las_iterator._current_chunk_index == 0
     assert w._las_iterator.get_total_items_number() == 4
