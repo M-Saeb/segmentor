@@ -213,6 +213,19 @@ def get_purple_colors(i):
     purple_grade = i * 0.01
     return [ 1 - purple_grade, 0.0, 1 - purple_grade]
 
+def get_cyan_colors(i):
+    cyan_grade = i * 0.01
+    return [ 0.0, 1 - cyan_grade, 1 - cyan_grade]
+
+def get_pink_colors(i):
+    pink_grade = i * 0.01
+    return [ 1 - pink_grade, 0.0, 1 - pink_grade]
+
+def get_brown_colors(i):
+    brown_grade = i * 0.01
+    return [ 0.5 - brown_grade, 0.25 - brown_grade, 0.0]
+
+
 def segment_ground(pcd, debug=False):
     floor_plane_data = []
     other_planes_data = []
@@ -400,7 +413,7 @@ def other_structure_segmentation(pcd, debug=False):
     return other_structure_plane_data, remain_pcd
 
 def segment_objects(pcd, debug=False):
-    labels = np.asarray(pcd.cluster_dbscan(eps=0.4, min_points=15, print_progress=False))
+    labels = np.asarray(pcd.cluster_dbscan(eps=0.35, min_points=15, print_progress=False))
     if labels.size == 0:
         return [], pcd
 
@@ -413,20 +426,25 @@ def segment_objects(pcd, debug=False):
             continue
         cluster_pcd = pcd.select_by_index(indices)
         cluster_pcd = restore_inlier_rgb_from_las(cluster_pcd)
-        cluster_pcd = restore_original_points_in_inliers(
+        og_cluster_pcd = restore_original_points_in_inliers(
             cluster_pcd,
             "/home/mohammedalsalihi/LidarData/for_mohammed/fh_underground.las",
             voxel_size=0.15,
         )
-        draw_geometries_with_light_blue_background([cluster_pcd])
-        to_render = input("to render? (y/n)")
+        # draw_geometries_with_light_blue_background([cluster_pcd])
+        to_render = "y" # input("to render? (y/n)")
         if to_render == "y":
-            render_rotating_isometric_video(cluster_pcd, "temp/video.mp4", fps=10)
-        # plane_id = get_plane_id_from_ai(
-        #     cluster_pcd,
-        #     remain_pcd=pcd.select_by_index(indices, invert=True),
-        #     debug=debug
-        # )
+            # render_rotating_isometric_video(cluster_pcd, "temp/video.mp4", fps=10)
+            response = get_plane_id_from_ai(
+                og_cluster_pcd,
+                debug=debug
+            )
+            if response == "CAR":
+                cluster_pcd.paint_uniform_color(get_cyan_colors(i % 100))
+            elif response == "OTHER":
+                cluster_pcd.paint_uniform_color(get_pink_colors(i % 100))
+            else:
+                cluster_pcd.paint_uniform_color(get_orange_colors(i % 100))
 
 
         if debug:
@@ -469,6 +487,7 @@ for index, chunk_pcd in enumerate(kd_tree(pcd)):
     wall_plane_data, remain_pcd = segment_walls(remain_pcd)
     cieling_plane_data, remain_pcd = cieling_segmentation(remain_pcd, debug=False)
     # other_structure_plane_data, remain_pcd = other_structure_segmentation(remain_pcd, debug=True)
+
     objects_pcd, remain_pcd = segment_objects(remain_pcd, debug=False)
     new_chunk_pcd += remain_pcd
     for p in floor_plane_data:

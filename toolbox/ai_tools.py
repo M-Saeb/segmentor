@@ -1,6 +1,10 @@
 import base64
 import os
 import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
 import open3d as o3d
 import numpy as np
@@ -56,12 +60,14 @@ def identify_object_from_views(
     Send front/back isometric PNGs to Ollama and return a record for the YAML registry.
     """
     prompt = (
-        "You see two isometric views (front and back) of a LiDAR point cloud region with a white background. "
-        "All the points are in gray colors, except for a plane that is identified using RANSAC, that will be in red color."
-        "Your job is to identify if the plane is: GROUND, WALL, CEILING, or OTHER. "
-        "OTHER can refer to other objects like chairs, tables, cars, people, trees, etc., "
-        "Planes that only have a section of a clear plane, like only section of a ground, should still be classified as GROUND or WALL or CEILING."
-        "Your response should be a single word only: GROUND, WALL, CEILING, or OTHER."
+        "You see two isometric views (front and back) of a LiDAR point cloud region with a light blue background. "
+        "The points are in their original colors, with the objects standing straight up. "
+        "Your job is to identify the object and respond with a single word: CAR, OTHER, or NONE."
+        "CAR refer to cars, trucks, buses, etc., "
+        "OTHER refer to identifiable objects like chairs, tables, people, trees, etc., "
+        "NONE refer to none identifiable object, or structures like walls, ground, pillars, ceiling, stairs, and vents."
+        "Some specific guidelines:"
+        "- If you see a bunch of random point, return NONE"
     )
 
     b64_front = _encode_image_b64(front_path)
@@ -102,10 +108,12 @@ def identify_object_from_views(
     }
 
 
-
 def take_isometric_screenshots(pcd, dir_name, file_prefix=""):
     """
     Save front and back isometric PNGs of the point cloud (RGB via pcd.colors).
+
+    Rendering runs in a subprocess so each call gets a clean Open3D/Filament/EGL
+    lifecycle (avoids segfaults from repeated OffscreenRenderer in the parent).
 
     If file_prefix is empty, writes:
         {dir_name}/front_isometric.png, {dir_name}/back_isometric.png
@@ -115,51 +123,30 @@ def take_isometric_screenshots(pcd, dir_name, file_prefix=""):
     if not os.path.exists(dir_name):
         os.makedirs(dir_name, exist_ok=True)
 
-    # Scale point cloud 3x around its center to make it visually larger.
-    scaled_pcd = o3d.geometry.PointCloud(pcd)
-    scaled_pcd.scale(10.0, center=scaled_pcd.get_center())
-
-    width, height = 640, 480
-    renderer = o3d.visualization.rendering.OffscreenRenderer(width, height)
-
-    # Match light blue background used in sandbox.draw_geometries_with_light_blue_background.
-    renderer.scene.set_background(np.array([0.8, 0.9, 1.0, 1.0], dtype=float))
-
-    mat = o3d.visualization.rendering.MaterialRecord()
-    mat.shader = "defaultUnlit"
-    renderer.scene.add_geometry("cloud", scaled_pcd, mat)
-
-    center = np.asarray(scaled_pcd.get_center(), dtype=float)
-    bounds = scaled_pcd.get_axis_aligned_bounding_box()
-    diag = float((bounds.get_max_bound() - bounds.get_min_bound()).max())
-
-    radius = max(1e-6, diag * 1.0)
-    up = [0.0, 0.0, 1.0]
-
-    elev_deg = 35.0
-    elev = np.deg2rad(elev_deg)
-    z_off = radius * np.sin(elev)
-    horiz_r = radius * np.cos(elev)
-
-    views = {
-        "front_isometric": 225.0,
-        "back_isometric": 45.0,
-    }
-
-    for name, az_deg in views.items():
-        theta = np.deg2rad(az_deg)
-        x_off = horiz_r * np.cos(theta)
-        y_off = horiz_r * np.sin(theta)
-        eye = center + np.array([x_off, y_off, z_off], dtype=float)
-
-        renderer.setup_camera(60.0, center, eye, up)
-        img = renderer.render_to_image()
-        if file_prefix:
-            fname = f"{file_prefix}_{name}.png"
-        else:
-            fname = f"{name}.png"
-        o3d.io.write_image(os.path.join(dir_name, fname), img)
-        log.debug("Saved %s/%s", dir_name, fname)
+    worker = Path(__file__).resolve().parent / "isometric_screenshots_worker.py"
+    fd, ply_tmp = tempfile.mkstemp(suffix=".ply", prefix="o3d_iso_")
+    os.close(fd)
+    try:
+        if not o3d.io.write_point_cloud(ply_tmp, pcd):
+            raise RuntimeError("Failed to write temporary PLY for isometric screenshots.")
+        subprocess.run(
+            [
+                sys.executable,
+                str(worker),
+                ply_tmp,
+                os.path.abspath(dir_name),
+                file_prefix,
+            ],
+            check=True,
+        )
+    except subprocess.CalledProcessError as ex:
+        log.warning("take_isometric_screenshots: subprocess failed: %s", ex)
+        raise
+    finally:
+        try:
+            os.unlink(ply_tmp)
+        except OSError:
+            pass
 
 def take_screenshot(pcd, dir_name):
     """
@@ -174,11 +161,8 @@ def take_screenshot(pcd, dir_name):
 
 
 
-def get_plane_id_from_ai(pcd_inliers, remain_pcd, debug=False):
-    remain_pcd_color = [0.5, 0.5, 0.5] # gray
-    remain_pcd.paint_uniform_color(remain_pcd_color)
-    pcd = pcd_inliers # + remain_pcd
-    take_screenshot(pcd, "temp")
+def get_plane_id_from_ai(pcd_inliers, debug=False):
+    take_screenshot(pcd_inliers, "temp")
     response = identify_object_from_views(
         "temp/front_isometric.png",
         "temp/back_isometric.png",
@@ -186,5 +170,5 @@ def get_plane_id_from_ai(pcd_inliers, remain_pcd, debug=False):
         chunk_index=0,
         ollama_model="gemma3:4b",
     )
-    print("response: %s", response)
+    print("====== response", response)
     return response
