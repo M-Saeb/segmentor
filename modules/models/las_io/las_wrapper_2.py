@@ -5,13 +5,13 @@ import open3d as o3d
 import numpy as np
 from modules.utils import log_utils, config, constants
 from .las_snapshot import LasSnapshot
-from .las_iterator import LasIteratorBasic
+from .las_iterator import LasIteratorAbstract, LasIteratorBasic
 
 log = log_utils.get_dual_logger(__name__)
 
 class LasWrapper2:
 
-    def __init__(self, config: config.SegmentorConfig):
+    def __init__(self, config: config.SegmentorConfig, iterator_class: type[LasIteratorAbstract]=None):
         """
         High-level wrapper around LAS I/O and chunk iteration.
 
@@ -22,7 +22,10 @@ class LasWrapper2:
         self.chunk_size = config.chunk_size
         self.reset_classification = config.reset_classification
         # Preview navigation state (loaded lazily via iterate_chunk()).
-        self._las_iterator = LasIteratorBasic(self.input_file, self.chunk_size)
+        if iterator_class is None:
+            self._las_iterator = LasIteratorBasic(self.input_file, self.chunk_size)
+        else:
+            self._las_iterator = iterator_class(self.input_file, self.chunk_size)
         self.current_chunk = None
         self.snapshot = LasSnapshot(self._get_original_las_header())
         log.debug("Chunk size set to: %d", self.chunk_size)

@@ -3,6 +3,7 @@ from typing import Dict
 from modules.utils.config import SegmentorConfig
 from modules.utils.pipeline import PipelineStage, Pipeline
 from modules.models.las_io.las_wrapper_2 import LasWrapper2 as LasWrapper
+from modules.models.las_io.las_iterator import LasIteratorKDTree
 from modules.models import output_tools
 from modules.models import pcd_tools
 from modules.utils.log_utils import get_dual_logger
@@ -15,7 +16,7 @@ log = get_dual_logger(__name__)
 class Controller:
     def __init__(self, config: SegmentorConfig, *, require_setup_pipeline: bool = True):
         self.config = config
-        self.las_wrapper = LasWrapper(config)
+        self.las_wrapper = LasWrapper(config, iterator_class=LasIteratorKDTree)
         if not self.las_wrapper.iterate_chunk(0):
             log.warning("Could not initialize LasWrapper preview chunk; input may be empty.")
         self.output_folder_path = output_tools.init_result_folder_path(config)
@@ -336,8 +337,8 @@ class Controller:
         )
 
     def _process_objects_segmentation_stage(self, pcd, points_attributes, **kwargs):
-        kwargs = dict(kwargs)
-        kwargs["enable_vlm"] = True
+        # kwargs["enable_vlm"] = True
+        kwargs["enable_vlm"] = False
         return pcd_tools.segment_objects(
             pcd,
             points_attributes,

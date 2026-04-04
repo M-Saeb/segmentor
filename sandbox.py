@@ -2,7 +2,6 @@ import open3d as o3d
 import json
 import laspy
 import numpy as np
-from toolbox.read_las_file import read_whole_las_file
 from modules.utils import config
 from modules.models.las_wrapper import LasWrapper
 from toolbox.density import get_inlier_density
@@ -11,6 +10,8 @@ from toolbox.video_render import render_rotating_isometric_video
 from toolbox.restore_origina_pcd import restore_original_points_in_inliers
 
 LAS_FILE_PATH = "/tmp/las/data.las"
+# Points per read when streaming LAS for kd_tree (logical index.json ranges use global point indices).
+_KD_TREE_LAS_READ_CHUNK_SIZE = 1_000_000
 
 
 def display_pcd_in_rgb():
@@ -230,7 +231,7 @@ def segment_ground(pcd, debug=False):
     floor_plane_data = []
     other_planes_data = []
     remain_pcd = pcd
-    for i in range(100):        
+    for i in range(10):        
         plane_model, inliers = remain_pcd.segment_plane(
             distance_threshold=0.1,
             ransac_n=3,
@@ -465,22 +466,48 @@ def get_chunk_sizes(file_path: str) -> np.ndarray:
         data = json.load(file)
     return data["chunks"]
 
-def kd_tree(pcd: o3d.geometry.PointCloud) -> np.ndarray:
+def kd_tree():
+    """
+    Yield one Open3D point cloud per logical chunk from index.json.
+
+    For each logical range [start, end) (global point indices), stream LAS_FILE_PATH
+    in fixed-size file chunks and merge the overlapping slices so a logical chunk can
+    span multiple on-disk read chunks.
+    """
     chunks_data = get_chunk_sizes("/tmp/las/index.json")
-    for chunk in chunks_data:
-        start = chunk["start"]
-        end = chunk["end"]
-        chunk_pcd = pcd.select_by_index(list(range(start, end)))
-        yield chunk_pcd
+    for chunk_spec in chunks_data:
+        start = int(chunk_spec["start"])
+        end = int(chunk_spec["end"])
+        logical_pcd = o3d.geometry.PointCloud()
+        file_base = 0
+        with laspy.open(LAS_FILE_PATH) as f:
+            for las_chunk in f.chunk_iterator(_KD_TREE_LAS_READ_CHUNK_SIZE):
+                n = len(las_chunk.x)
+                chunk_end = file_base + n
+                overlap_lo = max(start, file_base)
+                overlap_hi = min(end, chunk_end)
+                if overlap_lo < overlap_hi:
+                    i0 = overlap_lo - file_base
+                    i1 = overlap_hi - file_base
+                    x = np.asarray(las_chunk.x[i0:i1], dtype=np.float64)
+                    y = np.asarray(las_chunk.y[i0:i1], dtype=np.float64)
+                    z = np.asarray(las_chunk.z[i0:i1], dtype=np.float64)
+                    xyz = np.column_stack((x, y, z))
+                    part = o3d.geometry.PointCloud()
+                    part.points = o3d.utility.Vector3dVector(xyz)
+                    logical_pcd += part
+                file_base = chunk_end
+                if file_base >= end:
+                    break
+        yield logical_pcd
 
 
 config = config.SegmentorConfig("config.yml")
 
-pcd = read_whole_las_file(LAS_FILE_PATH)
 pcd_color = [0.5, 0.5, 0.5] # gray
-pcd.paint_uniform_color(pcd_color)
 all_new_pcd = o3d.geometry.PointCloud()
-for index, chunk_pcd in enumerate(kd_tree(pcd)):
+for index, chunk_pcd in enumerate(kd_tree()):
+    chunk_pcd.paint_uniform_color(pcd_color)
     print(f"Processing chunk {index + 1}")
     new_chunk_pcd = o3d.geometry.PointCloud()
     floor_plane_data, remain_pcd = segment_ground(chunk_pcd, debug=False)
@@ -488,7 +515,7 @@ for index, chunk_pcd in enumerate(kd_tree(pcd)):
     cieling_plane_data, remain_pcd = cieling_segmentation(remain_pcd, debug=False)
     # other_structure_plane_data, remain_pcd = other_structure_segmentation(remain_pcd, debug=True)
 
-    objects_pcd, remain_pcd = segment_objects(remain_pcd, debug=False)
+    # objects_pcd, remain_pcd = segment_objects(remain_pcd, debug=False)
     new_chunk_pcd += remain_pcd
     for p in floor_plane_data:
         new_chunk_pcd += p["pcd"]
@@ -498,8 +525,8 @@ for index, chunk_pcd in enumerate(kd_tree(pcd)):
         new_chunk_pcd += p["pcd"]
     # for p in other_structure_plane_data:
     #     new_chunk_pcd += p["pcd"]
-    for p in objects_pcd:
-        new_chunk_pcd += p
+    # for p in objects_pcd:
+    #     new_chunk_pcd += p
     all_new_pcd += new_chunk_pcd
 
     o3d.visualization.draw_geometries([new_chunk_pcd])

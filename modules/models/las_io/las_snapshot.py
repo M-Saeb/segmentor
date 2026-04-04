@@ -62,5 +62,8 @@ class LasSnapshot:
             return pcd, points_attributes
 
     def delete_snapshot(self):
-        os.remove(self.path)
-        log.info("Deleted snapshot %s", self.path)
+        if os.path.exists(self.path):
+            os.remove(self.path)
+            log.info("Deleted snapshot %s", self.path)
+        else:
+            log.warning("Snapshot file does not exist")
