@@ -9,7 +9,7 @@ from .las_iterator import LasIteratorAbstract, LasIteratorBasic
 
 log = log_utils.get_dual_logger(__name__)
 
-class LasWrapper2:
+class LasWrapper:
 
     def __init__(self, config: config.SegmentorConfig, iterator_class: type[LasIteratorAbstract]=None):
         """

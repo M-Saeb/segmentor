@@ -2,7 +2,7 @@ from typing import Dict
 
 from modules.utils.config import SegmentorConfig
 from modules.utils.pipeline import PipelineStage, Pipeline
-from modules.models.las_io.las_wrapper_2 import LasWrapper2 as LasWrapper
+from modules.models.las_io.las_wrapper import LasWrapper
 from modules.models.las_io.las_iterator import LasIteratorKDTree
 from modules.models import output_tools
 from modules.models import pcd_tools
