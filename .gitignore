@@ -3,4 +3,4 @@ logs/
 pipelines/
 .snapshot.las
 .vscode
-.cursor
+temp

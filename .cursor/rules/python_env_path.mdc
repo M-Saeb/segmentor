@@ -1,0 +1,4 @@
+---
+description: "The path for the python environment is '/home/mohammedalsalihi/miniconda3/envs/segmentor/bin/python' Every time you run a python command, it should always be from the path above"
+alwaysApply: true
+---
