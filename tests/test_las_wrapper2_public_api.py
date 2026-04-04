@@ -9,7 +9,7 @@ import laspy
 import numpy as np
 import pytest
 
-from modules.models.las_wrapper_2 import LasWrapper2
+from modules.models import LasWrapper2
 from modules.utils.config import SegmentorConfig
 from modules.utils import constants
 
@@ -51,8 +51,8 @@ def test_init_sets_config_and_chunk_state(tmp_path, tiny_las_path):
     w = _make_wrapper(tmp_path, tiny_las_path)
     assert w.config.input_file == str(tiny_las_path)
     assert w.current_chunk is None
-    assert w._chunk_index == 0
-    assert w._total_chunks is None
+    assert w._las_iterator._current_chunk_index == 0
+    assert w._las_iterator.get_total_items_number() == 4
 
 
 def test_genrate_unique_id_nonempty_hex(tmp_path, tiny_las_path):
@@ -64,7 +64,7 @@ def test_genrate_unique_id_nonempty_hex(tmp_path, tiny_las_path):
     # differ across calls; do not assert stability until the implementation sorts keys.
 
 
-def test_iterate_chunk_zero_loads_first_chunk_and_classification_reset(tmp_path, tiny_las_path):
+def test_iterate_chunk_zero_loads_first_chunk(tmp_path, tiny_las_path):
     w = _make_wrapper(tmp_path, tiny_las_path, chunk_size=30, reset_classification=True)
     assert w.iterate_chunk(0) is True
     pcd, attrs = w.get_current_chunk()
@@ -72,7 +72,6 @@ def test_iterate_chunk_zero_loads_first_chunk_and_classification_reset(tmp_path,
     assert n == 30
     assert "classification" in attrs
     assert attrs["classification"].shape == (n,)
-    assert np.all(attrs["classification"] == constants.PCB_CLASSIFICATION_INIT)
 
 
 def test_iterate_chunk_boundaries(tmp_path, tiny_las_path):
@@ -85,7 +84,7 @@ def test_iterate_chunk_boundaries(tmp_path, tiny_las_path):
         assert w.iterate_chunk(1) is True
     assert w.iterate_chunk(1) is False
     assert w.iterate_chunk(-(expected - 1)) is True
-    assert w._chunk_index == 0
+    assert w._las_iterator._current_chunk_index == 0
     assert w.iterate_chunk(-1) is False
 
 

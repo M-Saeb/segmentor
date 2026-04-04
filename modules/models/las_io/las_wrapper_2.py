@@ -4,7 +4,8 @@ import laspy
 import open3d as o3d
 import numpy as np
 from modules.utils import log_utils, config, constants
-from modules.models.las_snapshot import LasSnapshot
+from .las_snapshot import LasSnapshot
+from .las_iterator import LasIteratorBasic
 
 log = log_utils.get_dual_logger(__name__)
 
@@ -20,8 +21,7 @@ class LasWrapper2:
         """
         self.config = config
         # Preview navigation state (loaded lazily via iterate_chunk()).
-        self._chunk_index = 0
-        self._total_chunks = None
+        self._las_iterator = LasIteratorBasic(config.input_file, config.chunk_size)
         self.current_chunk = None
         self.snapshot = LasSnapshot(self._get_original_las_header())
         log.debug("Chunk size set to: %d", self.config.chunk_size)
@@ -37,24 +37,6 @@ class LasWrapper2:
         raw_string = "\n".join(items)
         return hashlib.sha256(raw_string.encode()).hexdigest()
 
-    def _compute_total_chunks(self) -> int:
-        header = self._get_original_las_header()
-        chunk_size = self.config.chunk_size
-        n = header.point_count
-        if chunk_size <= 0:
-            return 1 if n > 0 else 0
-        return (n + chunk_size - 1) // chunk_size
-
-    def _load_chunk_at_index(self, index: int):
-        """
-        Load the i-th chunk from the input file (0-based). Reads sequentially
-        from the start of the file until the requested index is reached.
-        """
-        for i, chunk in enumerate(self._read_input_file_in_chunks()):
-            if i == index:
-                return chunk
-        raise IndexError(f"No chunk at index {index}")
-
     def iterate_chunk(self, delta: int) -> bool:
         """
         Move `current_chunk` forward or backward along input chunks.
@@ -67,15 +49,10 @@ class LasWrapper2:
             True if the current chunk changed, False if the target index is
             out of range (e.g. no next/previous chunk).
         """
-        if self._total_chunks is None:
-            self._total_chunks = self._compute_total_chunks()
-        if self._total_chunks <= 0:
+        ok = self._las_iterator.iterate_chunk(delta)
+        if not ok:
             return False
-        new_index = self._chunk_index + delta
-        if new_index < 0 or new_index >= self._total_chunks:
-            return False
-        self._chunk_index = new_index
-        self.current_chunk = self._load_chunk_at_index(new_index)
+        self.current_chunk = self._las_iterator.get_current_chunk()
         return True
 
     def _get_original_las_header(self):
@@ -88,45 +65,6 @@ class LasWrapper2:
         new_header.offsets = original_header.offsets
         new_header.scales = original_header.scales
         return new_header
-
-    def _read_input_file_in_chunks(self):
-        """
-        Read the LAS file in chunks and set up the Open3D point cloud and attributes.
-        """
-        for points in self._read_file_in_chunks():
-            pcd = o3d.geometry.PointCloud()
-            points_attributes = {}
-            xyz = np.vstack((points.x, points.y, points.z)).T
-            pcd.points = o3d.utility.Vector3dVector(xyz)
-
-            # Store all attributes except x, y, z
-            for dim in points.point_format.dimension_names:
-                if dim not in ('x', 'y', 'z'):
-                    if dim not in points_attributes:
-                        points_attributes[dim] = []
-                    points_attributes[dim].append(getattr(points, dim))
-
-            for dim, arrays in points_attributes.items():
-                points_attributes[dim] = np.concatenate(arrays)
-    
-            # Initialize classification attribute for all points
-            num_points = len(pcd.points)
-            if self.config.reset_classification:
-                classification = np.full(num_points, constants.PCB_CLASSIFICATION_INIT, dtype=np.uint8)
-                points_attributes['classification'] = classification
-            
-            yield pcd, points_attributes
-
-    def _read_file_in_chunks(self):
-        orignal_header = self._get_original_las_header()
-        chunk_size = self.config.chunk_size
-        log.info("Reading LAS file in chunks of %d / %d...", orignal_header.point_count, chunk_size)
-        expected_number_of_chunks = orignal_header.point_count // chunk_size
-        log.debug("Expected number of chunks: %d", expected_number_of_chunks)
-        with laspy.open(self.config.input_file) as f:
-            for index, points in enumerate(f.chunk_iterator(chunk_size)):
-                log.debug("Read chunk %d with %d points", index, len(points))
-                yield points
 
     def _update_pcd_and_points_attributes(self, pcd, points_attributes, indices):
         """
@@ -170,8 +108,11 @@ class LasWrapper2:
         """
         Public iterator over all input chunks as (index, pcd, points_attributes).
         """
-        for index, (pcd, points_attributes) in enumerate(self._read_input_file_in_chunks()):
+        index = 0
+        while self._las_iterator.iterate_chunk(delta=(0 if index == 0 else 1)):
+            pcd, points_attributes = self._las_iterator.get_current_chunk()
             yield index, pcd, points_attributes
+            index += 1
 
     def initialize_output_file(self, full_path):
         """
