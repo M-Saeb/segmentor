@@ -2,8 +2,8 @@ from typing import Dict
 
 from modules.utils.config import SegmentorConfig
 from modules.utils.pipeline import PipelineStage, Pipeline
-from modules.models.las_io.las_wrapper import LasWrapper
-from modules.models.las_io.las_iterator import LasIteratorKDTree
+from modules.models import LasWrapper
+from modules.models import LasIteratorKDTree
 from modules.models import output_tools
 from modules.models import pcd_tools
 from modules.utils.log_utils import get_dual_logger
@@ -191,7 +191,7 @@ class Controller:
 
         # Always start from the snapshotted input for this stage so that
         # repeated previews with different parameters do not stack effects.
-        self.las_wrapper.restore_snapshot()
+        self.las_wrapper.get_snapshot()
 
         # Merge stored params with any explicit overrides
         call_kwargs = {**current_stage.params, **kwargs}

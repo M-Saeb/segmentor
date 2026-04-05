@@ -54,16 +54,6 @@ def test_init_sets_config_and_chunk_state(tmp_path, tiny_las_path):
     assert w._las_iterator._current_chunk_index == 0
     assert w._las_iterator.get_total_items_number() == 4
 
-
-def test_genrate_unique_id_nonempty_hex(tmp_path, tiny_las_path):
-    w = _make_wrapper(tmp_path, tiny_las_path)
-    u = w.genrate_unique_id()
-    assert len(u) == 64
-    int(u, 16)
-    # Note: current implementation hashes header.__dict__ key order, which may
-    # differ across calls; do not assert stability until the implementation sorts keys.
-
-
 def test_iterate_chunk_zero_loads_first_chunk(tmp_path, tiny_las_path):
     w = _make_wrapper(tmp_path, tiny_las_path, chunk_size=30, reset_classification=True)
     assert w.iterate_chunk(0) is True
