@@ -1,4 +1,4 @@
-from modules.viewers import PipelineViewer
+from modules.viewers import PipelineViewer, PreProcessingViewer
 
 
 if __name__ == "__main__":
@@ -21,7 +21,10 @@ if __name__ == "__main__":
     if mode_arg == "pipeline":
         viewer = PipelineViewer(config_file)
         viewer.create_gui()
+    elif mode_arg == "pre_process":
+        viewer = PreProcessingViewer(config_file)
+        viewer.create_gui()
     else:
-        print(f"Invalid mode: {mode_arg}. Valid modes are: pre, pipeline, post")
+        print(f"Invalid mode: {mode_arg}. Valid modes are: pre_process, pipeline")
         sys.exit(1)
 
