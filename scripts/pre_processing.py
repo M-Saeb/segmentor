@@ -211,6 +211,35 @@ def _order_kdtree_index(
     return order, chunks, num_seeds
 
 
+def _reorder_pcd_and_attributes(
+    pcd: o3d.geometry.PointCloud,
+    points_attributes: dict[str, np.ndarray],
+    order: np.ndarray,
+) -> tuple[o3d.geometry.PointCloud, dict[str, np.ndarray]]:
+    """Apply permutation ``order`` so on-disk point order matches ``index.json`` ranges."""
+    n = len(pcd.points)
+    if n == 0:
+        return pcd, points_attributes
+    order = np.asarray(order, dtype=np.int64)
+    if order.shape[0] != n:
+        raise ValueError(
+            f"order length {order.shape[0]} does not match point count {n}"
+        )
+
+    xyz = np.asarray(pcd.points, dtype=np.float64)[order]
+    out_pcd = o3d.geometry.PointCloud()
+    out_pcd.points = o3d.utility.Vector3dVector(xyz)
+
+    out_attrs: dict[str, np.ndarray] = {}
+    for dim, arr in points_attributes.items():
+        arr_np = np.asarray(arr)
+        if arr_np.shape[0] == n:
+            out_attrs[dim] = arr_np[order]
+        else:
+            out_attrs[dim] = arr_np
+    return out_pcd, out_attrs
+
+
 def _write_las(
     input_path: str,
     output_path: str,
@@ -287,6 +316,8 @@ def run_script(
         target_points=output_chunk_size,
         max_depth=64,
     )
+    log.info("Reordering points and attributes")
+    pcd, merged_attrs = _reorder_pcd_and_attributes(pcd, merged_attrs, order)
 
     tmp_folder_path = pre_process_tools.get_pre_processed_data_folder_path(input_path)
     log.info(f"Storing pre-processed data in: {tmp_folder_path}")
