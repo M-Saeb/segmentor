@@ -191,7 +191,7 @@ class PipelineController:
 
         # Always start from the snapshotted input for this stage so that
         # repeated previews with different parameters do not stack effects.
-        self.las_wrapper.get_snapshot()
+        self.las_wrapper.restore_snapshot()
 
         # Merge stored params with any explicit overrides
         call_kwargs = {**current_stage.params, **kwargs}

@@ -4,7 +4,10 @@ from pathlib import Path
 import laspy
 import numpy as np
 import open3d as o3d
+from modules.utils import log_utils
 from . import las_io
+
+log = log_utils.get_dual_logger(__name__)
 
 
 class LasIteratorAbstract(ABC):
@@ -61,10 +64,13 @@ class LasIteratorKDTree(LasIteratorAbstract):
         self,
         file_path: str,
         chunk_size: int,
-        index_json_path: str | None = None,
     ):
         super().__init__(file_path, chunk_size)
-        idx_path = index_json_path or str(Path(file_path).parent / "index.json")
+        file_path = Path(file_path).parent
+        idx_path = str(file_path / "index.json")
+        log.debug("Indexing file path: %s", idx_path)
+        if not Path(idx_path).exists():
+            raise FileNotFoundError(f"Index file not found at {idx_path}")
         with open(idx_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         self._chunks_data = data["chunks"]

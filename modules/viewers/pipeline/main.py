@@ -36,6 +36,7 @@ class PipelineViewer:
     def _get_pre_processed_data_file(self, input_file: str) -> str:
         pre_processed_data_folder_path = pre_process_tools.get_pre_processed_data_folder_path(input_file)
         pre_processed_data_file = os.path.join(pre_processed_data_folder_path, "output.las")
+        log.debug("Changed input file to %s", pre_processed_data_file)
         return pre_processed_data_file
 
     def _update_chunk_header_label(self):
