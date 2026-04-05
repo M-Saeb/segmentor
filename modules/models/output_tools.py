@@ -2,10 +2,10 @@ import os
 import shutil
 import tempfile
 import yaml
-from .las_io.las_wrapper import LasWrapper
 from modules.utils import config
 from modules.models.ai_object_detector import identified_objects_yaml_path
 from modules.utils.log_utils import get_dual_logger
+from .las_tools.las_wrapper import LasWrapper
 
 log = get_dual_logger(__name__)
 

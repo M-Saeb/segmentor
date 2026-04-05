@@ -1,11 +1,9 @@
-import tempfile
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 
-import laspy
-from laspy.vlrs import VLR
 import numpy as np
 import open3d as o3d
 
@@ -13,23 +11,20 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from modules.models.las_wrapper import LasWrapper  # noqa: E402
-from modules.models import pcd_tools  # noqa: E402
-from modules.utils.config import SegmentorConfig  # noqa: E402
-from modules.utils import log_utils  # noqa: E402
+from modules.models.las_tools import las_io
+from modules.models import pcd_tools
+from modules.models import pre_process_tools
+from modules.utils import log_utils
+from modules.utils.config import SegmentorConfig
 
 log = log_utils.get_dual_logger(__name__)
 
-# Same skip list as LasWrapper.write_pcb_chunk_to_file for non-LAS dimensions.
-_SKIP_DIMS = frozenset({"object_cluster_id"})
-
-
-def _merge_chunks(wrap: LasWrapper) -> tuple[o3d.geometry.PointCloud, dict[str, np.ndarray]]:
+def _merge_chunks(file_path: str, chunk_size: int) -> tuple[o3d.geometry.PointCloud, dict[str, np.ndarray]]:
     xyz_parts: list[np.ndarray] = []
     attr_parts: dict[str, list[np.ndarray]] = {}
 
-    for _index, pcd, points_attributes in wrap.iter_input_chunks():
-        log.info("Merging chunk %d", _index)
+    for index, (pcd, points_attributes) in enumerate(las_io.read_chunk_las_file(file_path, chunk_size)):
+        log.info("Merging chunk %d", index + 1)
         xyz_parts.append(np.asarray(pcd.points, dtype=np.float64))
         for dim, arr in points_attributes.items():
             attr_parts.setdefault(dim, []).append(np.asarray(arr))
@@ -45,67 +40,6 @@ def _merge_chunks(wrap: LasWrapper) -> tuple[o3d.geometry.PointCloud, dict[str, 
     merged_pcd = o3d.geometry.PointCloud()
     merged_pcd.points = o3d.utility.Vector3dVector(xyz)
     return merged_pcd, merged_attrs
-
-def _quadtree_leaves(
-    xy: np.ndarray,
-    indices: np.ndarray,
-    target_points: int,
-    max_depth: int,
-    min_tile_meters: float,
-    depth: int = 0,
-) -> list[np.ndarray]:
-    """
-    Partition XY with a quadtree (four quadrants per split) until each leaf has at
-    most ``target_points`` points (or limits apply). Returns a list of global index
-    arrays, one per leaf, in DFS order (SW, SE, NW, NE).
-    """
-    n = len(indices)
-    if n == 0:
-        return []
-    if n <= target_points or depth >= max_depth:
-        return [indices]
-
-    xs = xy[indices, 0]
-    ys = xy[indices, 1]
-    xmin = float(xs.min())
-    xmax = float(xs.max())
-    ymin = float(ys.min())
-    ymax = float(ys.max())
-    if (xmax - xmin) < 1e-12 and (ymax - ymin) < 1e-12:
-        return [indices]
-    if (
-        min_tile_meters > 0
-        and (xmax - xmin) <= min_tile_meters
-        and (ymax - ymin) <= min_tile_meters
-    ):
-        return [indices]
-
-    cx = 0.5 * (xmin + xmax)
-    cy = 0.5 * (ymin + ymax)
-
-    x = xs
-    y = ys
-    sw = indices[(x <= cx) & (y <= cy)]
-    se = indices[(x > cx) & (y <= cy)]
-    nw = indices[(x <= cx) & (y > cy)]
-    ne = indices[(x > cx) & (y > cy)]
-
-    leaves: list[np.ndarray] = []
-    for child in (sw, se, nw, ne):
-        if len(child) == 0:
-            continue
-        leaves.extend(
-            _quadtree_leaves(
-                xy,
-                child,
-                target_points,
-                max_depth,
-                min_tile_meters,
-                depth + 1,
-            )
-        )
-    return leaves
-
 
 def _voxel_downsample_preserve_attributes(
     pcd: o3d.geometry.PointCloud,
@@ -215,9 +149,9 @@ def _order_kdtree_index(
     if n == 0:
         return np.arange(0, dtype=np.int64), [], 0
 
-    xyz = np.asarray(xyz, dtype=np.float64)
-    xmin, ymin, zmin = xyz.min(axis=0)
-    xmax, ymax, zmax = xyz.max(axis=0)
+    read_xyz = np.asarray(xyz, dtype=np.float64)
+    xmin, ymin, zmin = read_xyz.min(axis=0)
+    xmax, ymax, zmax = read_xyz.max(axis=0)
 
     num_bins = max(1, int(np.ceil(n / float(target_points))))
     cap = 2 ** min(max(0, int(max_depth)), 24)
@@ -249,11 +183,11 @@ def _order_kdtree_index(
 
     bin_id = np.empty(n, dtype=np.int64)
     for i in range(n):
-        pt = xyz[i]
+        pt = read_xyz[i]
         _, ind, _ = tree.search_knn_vector_3d(pt, 1)
         bin_id[i] = int(ind[0])
 
-    z = xyz[:, 2]
+    z = read_xyz[:, 2]
     order = np.lexsort((z, bin_id))
 
     counts = np.bincount(bin_id, minlength=num_seeds)
@@ -278,95 +212,96 @@ def _order_kdtree_index(
 
 
 def _write_las(
-    wrap: LasWrapper,
+    input_path: str,
     output_path: str,
-    xyz: np.ndarray,
+    chunk_size: int,
+    pcd: o3d.geometry.PointCloud,
     merged_attrs: dict[str, np.ndarray],
 ) -> None:
     """
-    Write LAS in slices of ``wrap.config.chunk_size``, matching
+    Write LAS in slices of ``chunk_size``, matching
     ``LasWrapper.initialize_output_file`` + ``write_pcb_chunk_to_file`` (append).
 
     Optionally embeds a JSON VLR (user_id ``Segmentor``, record_id ``65001``) with
     ``segmentor_is_sorted`` and ``sort_mode`` to mark that this file was
     pre-processed by reordering/sorting.
     """
-    n = len(xyz)
-    chunk_size = int(wrap.config.chunk_size)
+    n = len(pcd.points)
     if chunk_size <= 0:
         chunk_size = max(n, 1)
 
-    base_header = wrap._create_new_las_filer_header()
+    las_header = las_io.create_new_las_header(
+        las_io.get_original_las_header(input_path)
+    )
 
-    with laspy.open(output_path, mode="w", header=base_header) as _writer:
-        pass
+    las_io.init_las_file(output_path, las_header)
 
-    log.info("Writing %d points to %s in chunks of %d", n, output_path, chunk_size)
+    log.info(
+        "Writing {:,} points to {} in chunks of {:,}".format(n, output_path, chunk_size)
+    )
 
-    for start in range(0, n, chunk_size):
-        end = min(start + chunk_size, n)
-        new_las_header = wrap._create_new_las_filer_header()
-        with laspy.open(output_path, mode="a", header=new_las_header) as writer:
-            las_chunk = laspy.LasData(new_las_header)
-            las_chunk.x = xyz[start:end, 0]
-            las_chunk.y = xyz[start:end, 1]
-            las_chunk.z = xyz[start:end, 2]
-            for dim, arr in merged_attrs.items():
-                if dim in _SKIP_DIMS:
-                    continue
-                setattr(las_chunk, dim, arr[start:end])
-            writer.append_points(las_chunk.points)
-            log.debug("Appended points [%d, %d)", start, end)
+    las_io.write_chunk_las_file(
+        pcd,
+        merged_attrs,
+        output_path,
+        las_header,
+    )
 
 
 def run_script(
-    config: SegmentorConfig,
+    input_path: str,
+    input_chunk_size: int,
+    output_chunk_size: int,
+    filter_noise: dict[str, float],
+    downsample: dict[str, float],
 ) -> int:
 
-    wrap = LasWrapper(config)
-
-    pcd, merged_attrs = _merge_chunks(wrap)
-    log.info("Initial point count: %d", len(pcd.points))
+    pcd, merged_attrs = _merge_chunks(
+        input_path,
+        input_chunk_size
+    )
+    log.info("Initial point count: {:,}".format(len(pcd.points)))
 
     # 2) Remove Statistical outliers (Open3D) while keeping attributes aligned.
     pcd, merged_attrs = pcd_tools.filter_noise(
         pcd,
         merged_attrs,
-        nb_neighbors=config.filter_noise["nb_neighbors"],
-        std_ratio=config.filter_noise["std_ratio"],
+        nb_neighbors=filter_noise["nb_neighbors"],
+        std_ratio=filter_noise["std_ratio"],
     )
-    log.info("After statistical outlier removal: %d", len(pcd.points))
+    log.info("After statistical outlier removal: {:,}".format(len(pcd.points)))
 
     # 3) Voxel downsampling (Open3D), preserving LAS attributes by nearest neighbor.
     pcd, merged_attrs = _voxel_downsample_preserve_attributes(
         pcd,
         merged_attrs,
-        voxel_size=config.downsample["voxel_size"],
+        voxel_size=downsample["voxel_size"],
     )
-    log.info("After voxel downsampling: %d", len(pcd.points))
+    log.info("After voxel downsampling: {:,}".format(len(pcd.points)))
 
     xyz = np.asarray(pcd.points)
     kd_num_seeds = 0
     kd_chunks: list[dict[str, int]] = []
     order, kd_chunks, kd_num_seeds = _order_kdtree_index(
         xyz,
-        target_points=config.chunk_size,
+        target_points=output_chunk_size,
         max_depth=64,
     )
 
-    tmp_folder_path = tempfile.mkdtemp(prefix=f"segmentor_{wrap.genrate_unique_id()}")
+    tmp_folder_path = pre_process_tools.get_pre_processed_data_folder_path(input_path)
     log.info(f"Storing pre-processed data in: {tmp_folder_path}")
     output_path = os.path.join(tmp_folder_path, "output.las")
     index_path = os.path.join(tmp_folder_path, "index.json")
 
     _write_las(
-        wrap,
-        output_path,
-        xyz,
-        merged_attrs,
+        input_path=input_path,
+        output_path=output_path,
+        chunk_size=output_chunk_size,
+        pcd=pcd,
+        merged_attrs=merged_attrs,
     )
     index_payload = {
-        "target_points_per_tile": config.chunk_size,
+        "target_points_per_tile": output_chunk_size,
         "num_seeds": kd_num_seeds,
         "chunks": kd_chunks,
     }
@@ -377,9 +312,24 @@ def run_script(
     return tmp_folder_path
 
 def main() -> int:
-    return run_script(
-        config=SegmentorConfig("config.yml"),
-    )
+    user_input = {
+        "input_chunk_size": 10_000_000,
+        "output_chunk_size": 25_000,
+        "filter_noise": {
+            "nb_neighbors": 20,
+            "std_ratio": 2.0
+        },
+        "downsample": {
+            "voxel_size": 0.15
+        }
+    }
+    config_file = "config.yml"
+    config = SegmentorConfig(config_file)
+    config_input = {
+        "input_path": config.input_file,
+    }
+    full_input = dict(**user_input, **config_input)
+    return run_script(**full_input)
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from modules.controller.main import Controller  # noqa: E402
+from modules.controller.main import PipelineController  # noqa: E402
 from modules.utils.config import SegmentorConfig  # noqa: E402
 from modules.utils.log_utils import get_dual_logger  # noqa: E402
 
@@ -68,7 +68,7 @@ def main() -> int:
         return 1
 
     config = SegmentorConfig(config_path)
-    controller = Controller(config, require_setup_pipeline=False)
+    controller = PipelineController(config, require_setup_pipeline=False)
     try:
         controller.load_process_pipeline_from_dict(pipeline_data)
     except ValueError as e:

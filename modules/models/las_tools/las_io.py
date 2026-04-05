@@ -1,9 +1,13 @@
-from typing import Iterator
+from typing import Iterator, Union
 import hashlib
+import uuid
 import laspy
 import numpy as np
 import open3d as o3d
 
+from modules.utils import log_utils
+
+log = log_utils.get_dual_logger(__name__)
 EXCLUDED_DIMENSIONS = ('x', 'y', 'z')
 
 def get_original_las_header(file_path: str) -> laspy.LasHeader:
@@ -19,13 +23,16 @@ def create_new_las_header(original_header: laspy.LasHeader) -> laspy.LasHeader:
     result.scales = original_header.scales
     return result
 
-def get_las_unique_id(file_path: str) -> str:
+def get_las_file_uuid(file_path: str) -> Union[uuid.UUID, None]:    
+    to_include_headers = ["_version", "creation_date", "point_count", "scales", "offsets", "maxs", "mins", "offset_to_point_data"]
     header = get_original_las_header(file_path)
     items = []
     for key in header.__dict__.keys():
+        if key not in to_include_headers:
+            continue
         items.append(f"{key}: {getattr(header, key)}")
     raw_string = "\n".join(items)
-    return hashlib.sha256(raw_string.encode()).hexdigest()
+    return uuid.uuid5(uuid.NAMESPACE_URL, raw_string)
 
 def read_full_las_file(file_path: str) -> tuple[o3d.geometry.PointCloud, dict]:
     with laspy.open(file_path) as reader:
