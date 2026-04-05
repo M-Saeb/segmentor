@@ -3,13 +3,13 @@ import json
 import laspy
 import numpy as np
 from modules.utils import config
-from modules.models.las_wrapper import LasWrapper
 from toolbox.density import get_inlier_density
 from toolbox.ai_tools import get_plane_id_from_ai
 from toolbox.video_render import render_rotating_isometric_video
 from toolbox.restore_origina_pcd import restore_original_points_in_inliers
 
-LAS_FILE_PATH = "/tmp/las/data.las"
+LAS_FILE_PATH = "/tmp/segmentor_4b1faa02-e417-5d6a-8737-011b8966905e/output.las"
+INDEXING_FILE_PATH = "/tmp/segmentor_4b1faa02-e417-5d6a-8737-011b8966905e/index.json"
 # Points per read when streaming LAS for kd_tree (logical index.json ranges use global point indices).
 _KD_TREE_LAS_READ_CHUNK_SIZE = 1_000_000
 
@@ -474,7 +474,7 @@ def kd_tree():
     in fixed-size file chunks and merge the overlapping slices so a logical chunk can
     span multiple on-disk read chunks.
     """
-    chunks_data = get_chunk_sizes("/tmp/las/index.json")
+    chunks_data = get_chunk_sizes(INDEXING_FILE_PATH)
     for chunk_spec in chunks_data:
         start = int(chunk_spec["start"])
         end = int(chunk_spec["end"])
