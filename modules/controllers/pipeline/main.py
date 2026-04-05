@@ -13,7 +13,7 @@ from .pcd_previewer import PCDPreviewer
 log = get_dual_logger(__name__)
 
 
-class Controller:
+class PipelineController:
     def __init__(self, config: SegmentorConfig, *, require_setup_pipeline: bool = True):
         self.config = config
         self.las_wrapper = LasWrapper(config, iterator_class=LasIteratorKDTree)

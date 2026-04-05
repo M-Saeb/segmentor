@@ -3,16 +3,16 @@ import threading
 import os
 from modules.utils.config import SegmentorConfig
 from modules.utils.log_utils import get_dual_logger
-from modules.controller import Controller
+from modules.controllers import PipelineController
 from .input_layout import create_input_layout_for_stage
 
 log = get_dual_logger(__name__)
 
-class Viewer:
+class PipelineViewer:
 
     def __init__(self, config: str):
         self._config = SegmentorConfig(config)
-        self.controller = Controller(self._config)
+        self.controller = PipelineController(self._config)
         self._window = None
         self._layout = None  # left control panel (container)
         self._main_layout = None  # section for main buttons

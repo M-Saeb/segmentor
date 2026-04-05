@@ -1,4 +1,4 @@
-from modules.viewer import Viewer
+from modules.viewers import PipelineViewer
 
 if __name__ == "__main__":
     import sys
@@ -10,5 +10,5 @@ if __name__ == "__main__":
     else:
         config_file = default_config_file
 
-    viewer = Viewer(config_file)
+    viewer = PipelineViewer(config_file)
     viewer.create_gui()
