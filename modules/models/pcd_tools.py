@@ -755,8 +755,8 @@ def segment_objects_dbscan(pcd, points_attributes, eps, min_points):
     Neighbors are computed only within the unclassified subset so clusters cannot
     bridge through ground, walls, or ceiling.
 
-    Sets object_cluster_id (1..K per cluster) when clusters exist; removed by segment_objects
-    before downstream use. Cleared at start if present from a previous run.
+    Sets object_cluster_id (1..K per cluster) when clusters exist; segment_objects may strip it
+    for setup preview. Cleared at start if present from a previous run.
     """
     points_attributes.pop("object_cluster_id", None)
     classification = points_attributes.get("classification", None)
@@ -929,88 +929,9 @@ def segment_objects(
     DBSCAN object segmentation, optionally followed by per-cluster RGB screenshots and VLM labeling.
 
     When enable_vlm is False (e.g. setup GUI preview), only DBSCAN runs; no screenshots or Ollama.
-    Removes internal object_cluster_id before return (classification unchanged for objects).
     """
     pcd, points_attributes = segment_objects_dbscan(
         pcd, points_attributes, eps, min_points
     )
 
-    oc_id = points_attributes.get("object_cluster_id")
-    if not enable_vlm:
-        points_attributes.pop("object_cluster_id", None)
-        return pcd, points_attributes
-
-    traces_dir = os.path.join(output_folder_path, vlm_traces_subdir)
-    os.makedirs(traces_dir, exist_ok=True)
-
-    if oc_id is None:
-        return pcd, points_attributes
-
-    oc_id = np.asarray(oc_id, dtype=np.int32)
-    unique_clusters = sorted(int(c) for c in np.unique(oc_id) if c > 0)
-    if not unique_clusters:
-        points_attributes.pop("object_cluster_id", None)
-        return pcd, points_attributes
-
-    cls_arr = np.asarray(points_attributes["classification"])
-
-    for cid in unique_clusters:
-        try:
-            indices = mask_indices_for_object_vlm_view(cls_arr, oc_id, cid)
-            if len(indices) == 0:
-                log.warning("segment_objects: empty view for cluster %s; skipping", cid)
-                continue
-
-            view_pcd = pcd.select_by_index(indices)
-            view_attrs = {}
-            npt = len(cls_arr)
-            for k, v in points_attributes.items():
-                arr = np.asarray(v)
-                if arr.shape[0] == npt:
-                    view_attrs[k] = arr[indices]
-                else:
-                    view_attrs[k] = v
-
-            try:
-                _apply_rgb_colors_to_pcd(view_pcd, view_attrs)
-            except ValueError as e:
-                log.warning(
-                    "segment_objects: RGB missing for cluster %s (%s); skipping VLM.",
-                    cid,
-                    e,
-                )
-                continue
-
-            prefix = f"chunk{chunk_index:05d}_object{cid}"
-            take_isometric_screenshots(view_pcd, traces_dir, file_prefix=prefix)
-            front_name = f"{prefix}_front_isometric.png"
-            back_name = f"{prefix}_back_isometric.png"
-            front_path = os.path.join(traces_dir, front_name)
-            back_path = os.path.join(traces_dir, back_name)
-
-            try:
-                record = identify_object_from_views(
-                    front_path,
-                    back_path,
-                    cluster_id=cid,
-                    chunk_index=chunk_index,
-                    ollama_model=ollama_model,
-                )
-                merge_identified_objects_record(output_folder_path, record)
-            except Exception as ex:
-                log.warning(
-                    "segment_objects: VLM/YAML failed for cluster %s: %s",
-                    cid,
-                    ex,
-                    exc_info=True,
-                )
-        except Exception as ex:
-            log.warning(
-                "segment_objects: failed processing cluster %s: %s",
-                cid,
-                ex,
-                exc_info=True,
-            )
-
-    points_attributes.pop("object_cluster_id", None)
     return pcd, points_attributes

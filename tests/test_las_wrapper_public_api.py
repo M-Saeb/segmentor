@@ -137,13 +137,14 @@ def test_iter_input_chunks_matches_expected_count(tmp_path, tiny_las_path):
         assert len(pcd.points) == (chunk_size if i < expected - 1 else n % chunk_size or chunk_size)
 
 
-def test_initialize_output_and_write_pcb_chunk_skips_object_cluster_id(tmp_path, tiny_las_path):
+def test_initialize_output_and_write_pcb_chunk_writes_object_cluster_id(tmp_path, tiny_las_path):
     out = tmp_path / "out.las"
     w = _make_wrapper(tmp_path, tiny_las_path, chunk_size=100)
     w.iterate_chunk(0)
     pcd, attrs = w.get_current_chunk()
     attrs = dict(attrs)
-    attrs["object_cluster_id"] = np.arange(len(pcd.points), dtype=np.int32)
+    expected_ocid = np.arange(len(pcd.points), dtype=np.int32)
+    attrs["object_cluster_id"] = expected_ocid
 
     w.initialize_output_file(str(out))
     w.write_pcb_chunk_to_file(0, pcd, attrs, str(out))
@@ -151,8 +152,9 @@ def test_initialize_output_and_write_pcb_chunk_skips_object_cluster_id(tmp_path,
     with laspy.open(str(out)) as lasf:
         data = lasf.read()
     assert len(data.x) == len(pcd.points)
-    names = list(data.point_format.dimension_names)
-    assert "object_cluster_id" not in names
+    names = [n.lower() for n in data.point_format.dimension_names]
+    assert "object_cluster_id" in names
+    assert np.array_equal(np.asarray(data.object_cluster_id), expected_ocid)
 
 
 def test_empty_file_no_chunks(tmp_path):

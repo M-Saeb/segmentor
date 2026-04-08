@@ -8,6 +8,7 @@ from modules.models import pcd_tools
 from modules.models import pre_process_tools
 from modules.utils.config import SegmentorConfig
 from modules.utils.log_utils import get_dual_logger
+from modules.models import output_tools
 
 from .utils import (
     _merge_chunks,
@@ -62,11 +63,11 @@ class PreProcessingController:
         log.info("Reordering points and attributes")
         pcd, merged_attrs = _reorder_pcd_and_attributes(pcd, merged_attrs, order)
 
-        tmp_folder_path = pre_process_tools.get_pre_processed_data_folder_path(path)
-        log.info("Storing pre-processed data in: %s", tmp_folder_path)
-        output_path = os.path.join(tmp_folder_path, "output.las")
-        index_path = os.path.join(tmp_folder_path, "index.json")
-
+        result_folder_path = output_tools.init_result_folder_path(self.config)
+        output_path = output_tools.get_pre_processing_output_las_path(
+            result_folder_path
+        )
+        index_path = output_tools.get_pre_processing_index_json_path(result_folder_path)
         _write_las(
             input_path=path,
             output_path=output_path,
@@ -83,7 +84,7 @@ class PreProcessingController:
             json.dump(index_payload, f, indent=2)
         log.info("Wrote spatial bin index to %s", index_path)
 
-        return tmp_folder_path
+        return result_folder_path
 
     def run_from_user_input(
         self,

@@ -25,7 +25,7 @@ ground_segmentation:
     max_iter: 500
   ransac_params: # used when method is ransac
     distance_threshold: 0.1
-    num_iterations: 100
+    num_iterations: 10
 
 ceiling_segmentation:
   enable: true
@@ -38,10 +38,9 @@ wall_segmentation:
 
 objects_segmentation:
   enable: true
-  eps: 0.3
-  min_points: 20
+  eps: 0.35
+  min_points: 15
 
 result: # the resulted pointed cloud from the program
   display_result: false
   output_folder_path: "/home/mohammedalsalihi/LidarData/for_mohammed/fh_underground_result"
-  overwrite_output_folder: true

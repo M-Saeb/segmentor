@@ -19,8 +19,8 @@ class PipelineController:
         self.las_wrapper = LasWrapper(config, iterator_class=LasIteratorKDTree)
         if not self.las_wrapper.iterate_chunk(0):
             log.warning("Could not initialize LasWrapper preview chunk; input may be empty.")
-        self.output_folder_path = output_tools.init_result_folder_path(config)
-        self.full_las_path = output_tools.get_output_las_path(self.output_folder_path)
+        self.output_folder_path = output_tools.init_result_folder_path(config, use_existing_folder=True)
+        self.full_las_path = output_tools.get_pipeline_output_las_path(self.output_folder_path)
         self.output_las_writer = None
         if require_setup_pipeline:
             self.setup_pipeline = self._create_setup_pipeline()
@@ -337,8 +337,6 @@ class PipelineController:
         )
 
     def _process_objects_segmentation_stage(self, pcd, points_attributes, **kwargs):
-        # kwargs["enable_vlm"] = True
-        kwargs["enable_vlm"] = False
         return pcd_tools.segment_objects(
             pcd,
             points_attributes,
@@ -381,12 +379,11 @@ class PipelineController:
                     **stage_kwargs,
                 )
 
-            output_tools.write_las_chunk_to_output_file(
-                self.output_las_writer,
-                self.full_las_path,
-                index,
-                pcd,
-                points_attributes,
+            self.output_las_writer.write_pcb_chunk_to_file(
+                index=index,
+                pcd=pcd,
+                points_attributes=points_attributes,
+                full_path=self.full_las_path
             )
         log.info("===== Finished writing to: %s ======", self.full_las_path)
 

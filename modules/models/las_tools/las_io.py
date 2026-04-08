@@ -99,9 +99,8 @@ def write_chunk_las_file(
         las_chunk.x = points[:, 0]
         las_chunk.y = points[:, 1]
         las_chunk.z = points[:, 2]
-        # Restore LAS dimensions only (skip internal keys like object_cluster_id)
         for dim, arr in points_attributes.items():
-            if dim in ('object_cluster_id', ):
+            if dim in EXCLUDED_DIMENSIONS:
                 continue
             setattr(las_chunk, dim, arr)
         writer.append_points(las_chunk.points)

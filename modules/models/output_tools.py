@@ -1,6 +1,4 @@
 import os
-import shutil
-import tempfile
 import yaml
 from modules.utils import config
 from modules.models.ai_object_detector import identified_objects_yaml_path
@@ -9,18 +7,20 @@ from .las_tools.las_wrapper import LasWrapper
 
 log = get_dual_logger(__name__)
 
-def init_result_folder_path(cfg: config.SegmentorConfig) -> str:
+def init_result_folder_path(cfg: config.SegmentorConfig, use_existing_folder: bool = False) -> str:
     output_folder_path = cfg.result["output_folder_path"]
     log.info("Output folder path: %s", output_folder_path)
     if not os.path.exists(output_folder_path):
         os.makedirs(output_folder_path, exist_ok=True)
         return output_folder_path
 
-    log.info("Output folder already exists")
-    if cfg.result["overwrite_output_folder"]:
-        log.info("Overwriting output folder")
-        shutil.rmtree(output_folder_path)
-        os.makedirs(output_folder_path, exist_ok=True)
+    # check if folder is empty
+    if os.path.isdir(output_folder_path) and not os.listdir(output_folder_path):
+        log.info("Output folder is empty, using it")
+        return output_folder_path
+
+    if use_existing_folder:
+        log.info("Using existing output folder")
         return output_folder_path
 
     log.info("Creating new output folder with increamental name")
@@ -31,15 +31,18 @@ def init_result_folder_path(cfg: config.SegmentorConfig) -> str:
     os.makedirs(output_folder_path, exist_ok=False)
     return output_folder_path
 
+def get_pre_processing_output_las_path(result_folder_path: str) -> str:
+    return os.path.join(result_folder_path, "1_pre_processing.las")
 
-def get_output_las_path(result_folder_path: str) -> str:
-    return os.path.join(result_folder_path, "output.las")
+def get_pre_processing_index_json_path(result_folder_path: str) -> str:
+    return os.path.join(result_folder_path, "1_pre_processing_index.json")
 
+def get_pipeline_output_las_path(result_folder_path: str) -> str:
+    return os.path.join(result_folder_path, "2_pipeline.las")
 
 def path_for_identified_objects_yaml(result_folder_path: str) -> str:
     """Path to identified_objects.yml under the run output folder."""
     return identified_objects_yaml_path(result_folder_path)
-
 
 def create_pipeline_yaml_file(result_folder_path: str, pipeline_data: dict) -> str:
     """Write process pipeline (kind and stages with params) to pipeline.yml."""
@@ -49,19 +52,8 @@ def create_pipeline_yaml_file(result_folder_path: str, pipeline_data: dict) -> s
     log.info("Wrote pipeline YAML to: %s", path)
     return path
 
-
 def create_las_output_file(cfg: config.SegmentorConfig, output_las_path: str) -> LasWrapper:
     """Initialize output LAS file and return writer wrapper."""
     las_writer = LasWrapper(cfg)
     las_writer.initialize_output_file(output_las_path)
     return las_writer
-
-
-def write_las_chunk_to_output_file(
-    las_writer: LasWrapper,
-    output_las_path: str,
-    index,
-    pcd,
-    points_attributes,
-) -> None:
-    las_writer.write_pcb_chunk_to_file(index, pcd, points_attributes, output_las_path)
