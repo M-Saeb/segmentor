@@ -11,7 +11,6 @@ import pytest
 
 from modules.models import LasWrapper
 from modules.utils.config import SegmentorConfig
-from modules.utils import constants
 
 
 def _write_tiny_las(path: str, n_points: int = 100) -> None:

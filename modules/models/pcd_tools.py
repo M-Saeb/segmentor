@@ -2,6 +2,7 @@ import os
 import numpy as np
 import open3d as o3d
 from scipy.spatial import ConvexHull
+from modules.models.object_cluster_id_manager import ObjectClusterIdManager
 from modules.models.ai_object_detector import (
     identify_object_from_views,
     merge_identified_objects_record,
@@ -800,17 +801,20 @@ def segment_objects_dbscan(pcd, points_attributes, eps, min_points):
     global_object_indices = np.where(clustered_mask & init_mask)[0]
     classification[global_object_indices] = constants.PCB_CLASSIFICATION_OBJECTS
 
-    # Sequential cluster ids 1..K for each DBSCAN cluster (Open3D labels may be non-contiguous).
+    # Global cluster ids are reserved from a process-level singleton allocator so
+    # cluster IDs remain unique across chunk-by-chunk DBSCAN calls.
     object_cluster_id = np.zeros(num_points, dtype=np.int32)
-    raw_to_seq = {}
-    seq = 1
-    for raw in sorted(np.unique(labels[labels >= 0])):
-        raw_to_seq[int(raw)] = seq
-        seq += 1
+    unique_labels = sorted(np.unique(labels[labels >= 0]))
+    cluster_id_manager = ObjectClusterIdManager.get_instance()
+    reserved_ids = cluster_id_manager.reserve_next_ids(len(unique_labels))
+    raw_to_global_id = {
+        int(raw): int(global_id)
+        for raw, global_id in zip(unique_labels, reserved_ids)
+    }
     for idx, lab in enumerate(labels):
         lab = int(lab)
         if lab >= 0:
-            object_cluster_id[idx] = raw_to_seq[lab]
+            object_cluster_id[idx] = raw_to_global_id[lab]
 
     points_attributes["classification"] = classification
     points_attributes["object_cluster_id"] = object_cluster_id

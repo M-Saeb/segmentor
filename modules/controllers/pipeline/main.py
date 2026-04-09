@@ -6,6 +6,7 @@ from modules.models import LasWrapper
 from modules.models import LasIteratorKDTree
 from modules.models import output_tools
 from modules.models import pcd_tools
+from modules.models.object_cluster_id_manager import ObjectClusterIdManager
 from modules.utils.log_utils import get_dual_logger
 from modules.utils import constants
 from .pcd_previewer import PCDPreviewer
@@ -193,6 +194,10 @@ class PipelineController:
         # repeated previews with different parameters do not stack effects.
         self.las_wrapper.restore_snapshot()
 
+        # Keep setup preview deterministic when repeatedly rerunning objects DBSCAN.
+        if current_stage.name == constants.PIPELINE_OBJECTS_SEGMENTATION:
+            ObjectClusterIdManager.get_instance().reset(start=1)
+
         # Merge stored params with any explicit overrides
         call_kwargs = {**current_stage.params, **kwargs}
         current_stage.func(**call_kwargs)
@@ -366,6 +371,9 @@ class PipelineController:
         self.output_las_writer = output_tools.create_las_output_file(
             output_las_path=self.full_las_path,
         )
+
+        # Start each full processing run with a fresh global cluster-id range.
+        ObjectClusterIdManager.get_instance().reset(start=1)
 
         for index, pcd, points_attributes in self.las_wrapper.iter_input_chunks():
             for stage in self.process_pipeline.stages:
