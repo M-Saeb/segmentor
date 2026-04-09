@@ -26,9 +26,9 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from modules.controller.main import PipelineController  # noqa: E402
-from modules.utils.config import SegmentorConfig  # noqa: E402
-from modules.utils.log_utils import get_dual_logger  # noqa: E402
+from modules.controllers.pipeline.main import PipelineController
+from modules.utils.config import SegmentorConfig
+from modules.utils.log_utils import get_dual_logger
 
 log = get_dual_logger(__name__)
 

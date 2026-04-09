@@ -359,8 +359,8 @@ class PipelineController:
             return
 
         output_tools.create_pipeline_yaml_file(
-            self.output_folder_path,
-            self.process_pipeline.to_dict(),
+            pipeline_data=self.process_pipeline.to_dict(),
+            result_folder_path=self.output_folder_path,
         )
 
         self.output_las_writer = output_tools.create_las_output_file(
