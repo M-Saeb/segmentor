@@ -775,21 +775,27 @@ def segment_objects_dbscan(pcd, points_attributes, eps, min_points):
         )
         return pcd, points_attributes
 
-    # Run DBSCAN on the full point cloud, matching the core behavior of sandbox.segment_objects
-    # but still only assigning PCB_CLASSIFICATION_OBJECTS to points that are currently INIT.
+    init_mask = classification == constants.PCB_CLASSIFICATION_INIT
+    init_indices = np.where(init_mask)[0]
+    n_init = int(init_indices.size)
+    if n_init == 0:
+        log.info("DBSCAN skipped: no INIT points available for object segmentation.")
+        return pcd, points_attributes
+
+    init_pcd = pcd.select_by_index(init_indices.tolist())
     labels = np.asarray(
-        pcd.cluster_dbscan(eps=eps, min_points=min_points, print_progress=False)
+        init_pcd.cluster_dbscan(eps=eps, min_points=min_points, print_progress=False)
     )
     if labels.size == 0:
-        log.info("DBSCAN produced no labels; skipping object segmentation.")
+        log.info("DBSCAN produced no labels on INIT subset; skipping object segmentation.")
         return pcd, points_attributes
 
     clustered_mask = _dbscan_cluster_mask(labels)
     n_clustered = int(np.sum(clustered_mask))
     n_noise = int(np.sum(~clustered_mask))
     log.info(
-        "DBSCAN on %d points: %d clustered, %d noise (-1).",
-        num_points,
+        "DBSCAN on %d INIT points: %d clustered, %d noise (-1).",
+        n_init,
         n_clustered,
         n_noise,
     )
@@ -797,8 +803,7 @@ def segment_objects_dbscan(pcd, points_attributes, eps, min_points):
         return pcd, points_attributes
 
     classification = classification.copy()
-    init_mask = classification == constants.PCB_CLASSIFICATION_INIT
-    global_object_indices = np.where(clustered_mask & init_mask)[0]
+    global_object_indices = init_indices[clustered_mask]
     classification[global_object_indices] = constants.PCB_CLASSIFICATION_OBJECTS
 
     # Global cluster ids are reserved from a process-level singleton allocator so
@@ -811,10 +816,11 @@ def segment_objects_dbscan(pcd, points_attributes, eps, min_points):
         int(raw): int(global_id)
         for raw, global_id in zip(unique_labels, reserved_ids)
     }
-    for idx, lab in enumerate(labels):
+    for local_idx, lab in enumerate(labels):
         lab = int(lab)
         if lab >= 0:
-            object_cluster_id[idx] = raw_to_global_id[lab]
+            global_idx = int(init_indices[local_idx])
+            object_cluster_id[global_idx] = raw_to_global_id[lab]
 
     points_attributes["classification"] = classification
     points_attributes["object_cluster_id"] = object_cluster_id
