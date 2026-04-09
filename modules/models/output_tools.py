@@ -8,7 +8,15 @@ from .las_tools.las_wrapper import LasWrapper
 
 log = get_dual_logger(__name__)
 
-def init_result_folder_path(cfg: config.SegmentorConfig, use_existing_folder: bool = False) -> str:
+def _resolve_cfg(cfg: config.SegmentorConfig | None = None) -> config.SegmentorConfig:
+    if cfg is not None:
+        return cfg
+    return config.SegmentorConfig.get_instance()
+
+def init_result_folder_path(
+    use_existing_folder: bool = False,
+) -> str:
+    cfg = _resolve_cfg()
     output_folder_path = cfg.result["output_folder_path"]
     log.info("Getting output folder path: %s", output_folder_path)
     if not os.path.exists(output_folder_path):
@@ -61,8 +69,9 @@ def create_pipeline_yaml_file(pipeline_data: dict, result_folder_path: Union[str
     log.info("Wrote pipeline YAML to: %s", path)
     return path
 
-def create_las_output_file(cfg: config.SegmentorConfig, output_las_path: str) -> LasWrapper:
+def create_las_output_file(output_las_path: str) -> LasWrapper:
     """Initialize output LAS file and return writer wrapper."""
+    cfg = _resolve_cfg()
     las_writer = LasWrapper(cfg)
     las_writer.initialize_output_file(output_las_path)
     return las_writer

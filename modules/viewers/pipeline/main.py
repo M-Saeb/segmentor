@@ -12,9 +12,9 @@ log = get_dual_logger(__name__)
 class PipelineViewer:
 
     def __init__(self, config_file: str):
-        config = SegmentorConfig(config_file)
+        config = SegmentorConfig.initialize(config_file)
         config.input_file = self._get_pre_processed_data_file(config.input_file)
-        self.controller = PipelineController(config)
+        self.controller = PipelineController()
         self._window = None
         self._layout = None  # left control panel (container)
         self._main_layout = None  # section for main buttons

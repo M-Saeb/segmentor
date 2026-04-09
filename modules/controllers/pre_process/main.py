@@ -22,8 +22,8 @@ log = get_dual_logger(__name__)
 
 
 class PreProcessingController:
-    def __init__(self, config: SegmentorConfig):
-        self.config = config
+    def __init__(self):
+        self.config = SegmentorConfig.get_instance()
 
     def run(
         self,
@@ -63,7 +63,7 @@ class PreProcessingController:
         log.info("Reordering points and attributes")
         pcd, merged_attrs = _reorder_pcd_and_attributes(pcd, merged_attrs, order)
 
-        result_folder_path = output_tools.init_result_folder_path(self.config)
+        result_folder_path = output_tools.init_result_folder_path()
         output_path = output_tools.get_pre_processing_output_las_path(
             result_folder_path
         )

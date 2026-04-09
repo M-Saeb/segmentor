@@ -356,7 +356,7 @@ def main() -> int:
         print(f"Input not found: {input_path}", file=sys.stderr)
         return 1
 
-    cfg = config_module.SegmentorConfig(args.config)
+    cfg = config_module.SegmentorConfig.initialize(args.config)
     cfg.input_file = input_path
     cfg.reset_classification = False
 
@@ -372,7 +372,7 @@ def main() -> int:
         print("min_points must be >= 2.", file=sys.stderr)
         return 1
 
-    wrap = LasWrapper(cfg)
+    wrap = LasWrapper()
     xyz, merged_attrs = _merge_chunks(wrap)
 
     try:

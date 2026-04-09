@@ -62,7 +62,56 @@ class SegmentorConfig:
         "overwrite_output_folder": False
     }
 
-    def __init__(self, config_file: str):
+    _instance = None
+    _config_path: str | None = None
+
+    def __new__(cls, config_file: str | None = None):
+        """
+        Enforce one SegmentorConfig instance per process.
+
+        The first construction must provide ``config_file``. Any later
+        construction in the same process must use the same config path.
+        """
+        normalized = cls._normalize_config_path(config_file)
+
+        if cls._instance is None:
+            if normalized is None:
+                raise ValueError("SegmentorConfig is not initialized. Provide config_file.")
+            cls._instance = super().__new__(cls)
+            cls._config_path = normalized
+            cls._instance._initialized = False
+            return cls._instance
+
+        if normalized is not None and normalized != cls._config_path:
+            raise RuntimeError(
+                "SegmentorConfig singleton already initialized with "
+                f"{cls._config_path!r}; cannot reinitialize with {normalized!r}."
+            )
+        return cls._instance
+
+    @classmethod
+    def _normalize_config_path(cls, config_file: str | None) -> str | None:
+        if config_file is None:
+            return None
+        return os.path.realpath(os.path.abspath(config_file))
+
+    @classmethod
+    def initialize(cls, config_file: str):
+        """
+        Canonical singleton initializer.
+        """
+        return cls(config_file)
+
+    @classmethod
+    def get_instance(cls):
+        """
+        Return the initialized singleton instance.
+        """
+        if cls._instance is None:
+            raise RuntimeError("SegmentorConfig has not been initialized yet.")
+        return cls._instance
+
+    def __init__(self, config_file: str | None = None):
         """Initialize SegmentorConfig from a YAML file.
 
         Args:
@@ -72,11 +121,21 @@ class SegmentorConfig:
             FileNotFoundError: If config_file does not exist.
             yaml.YAMLError: If the YAML file is malformed.
         """
-        if not os.path.exists(config_file):
-            raise FileNotFoundError(f"Config file not found: {config_file}")
+        if getattr(self, "_initialized", False):
+            return
+
+        normalized_config_path = self._normalize_config_path(config_file)
+        if normalized_config_path is None:
+            raise ValueError("config_file is required for first initialization.")
+
+        # Keep an instance-level reference to the selected singleton config path.
+        self.config_file = normalized_config_path
+
+        if not os.path.exists(normalized_config_path):
+            raise FileNotFoundError(f"Config file not found: {normalized_config_path}")
 
         # Load YAML file
-        with open(config_file, "r") as f:
+        with open(normalized_config_path, "r") as f:
             config_data = yaml.safe_load(f) or {}
 
         self.validate_config_file(config_data)
@@ -84,6 +143,7 @@ class SegmentorConfig:
         # Override with loaded values from YAML
         for key, value in config_data.items():
             setattr(self, key, value)
+        self._initialized = True
 
     def validate_config_file(self, config_data):
         input_file = config_data.get("input_file", self.input_file)

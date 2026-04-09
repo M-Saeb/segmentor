@@ -14,12 +14,12 @@ log = get_dual_logger(__name__)
 
 
 class PipelineController:
-    def __init__(self, config: SegmentorConfig, *, require_setup_pipeline: bool = True):
-        self.config = config
-        self.las_wrapper = LasWrapper(config, iterator_class=LasIteratorKDTree)
+    def __init__(self, *, require_setup_pipeline: bool = True):
+        self.config = SegmentorConfig.get_instance()
+        self.las_wrapper = LasWrapper(iterator_class=LasIteratorKDTree)
         if not self.las_wrapper.iterate_chunk(0):
             log.warning("Could not initialize LasWrapper preview chunk; input may be empty.")
-        self.output_folder_path = output_tools.init_result_folder_path(config, use_existing_folder=True)
+        self.output_folder_path = output_tools.init_result_folder_path(use_existing_folder=True)
         self.full_las_path = output_tools.get_pipeline_output_las_path(self.output_folder_path)
         self.output_las_writer = None
         if require_setup_pipeline:
@@ -364,8 +364,7 @@ class PipelineController:
         )
 
         self.output_las_writer = output_tools.create_las_output_file(
-            self.config,
-            self.full_las_path,
+            output_las_path=self.full_las_path,
         )
 
         for index, pcd, points_attributes in self.las_wrapper.iter_input_chunks():

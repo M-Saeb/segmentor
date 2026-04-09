@@ -8,16 +8,22 @@ log = log_utils.get_dual_logger(__name__)
 
 class LasWrapper:
 
-    def __init__(self, config: config.SegmentorConfig, iterator_class: type[LasIteratorAbstract]=None):
+    def __init__(
+        self,
+        cfg: config.SegmentorConfig | None = None,
+        iterator_class: type[LasIteratorAbstract] = None,
+    ):
         """
         High-level wrapper around LAS I/O and chunk iteration.
 
         Args:
-            config: Parsed `SegmentorConfig` holding input path, chunk size.
+            cfg: Parsed `SegmentorConfig` holding input path, chunk size.
         """
-        self.input_file = config.input_file
-        self.chunk_size = config.chunk_size
-        self.reset_classification = config.reset_classification
+        if cfg is None:
+            cfg = config.SegmentorConfig.get_instance()
+        self.input_file = cfg.input_file
+        self.chunk_size = cfg.chunk_size
+        self.reset_classification = cfg.reset_classification
         # Preview navigation state (loaded lazily via iterate_chunk()).
         if iterator_class is None:
             self._las_iterator = LasIteratorBasic(self.input_file, self.chunk_size)

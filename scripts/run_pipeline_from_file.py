@@ -67,8 +67,8 @@ def main() -> int:
         log.error("Pipeline YAML must load to a mapping at the top level")
         return 1
 
-    config = SegmentorConfig(config_path)
-    controller = PipelineController(config, require_setup_pipeline=False)
+    SegmentorConfig.initialize(config_path)
+    controller = PipelineController(require_setup_pipeline=False)
     try:
         controller.load_process_pipeline_from_dict(pipeline_data)
     except ValueError as e:

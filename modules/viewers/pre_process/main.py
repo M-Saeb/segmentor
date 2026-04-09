@@ -18,8 +18,8 @@ _DEFAULT_VOXEL_SIZE = 0.15
 
 class PreProcessingViewer:
     def __init__(self, config_file: str):
-        self.config = SegmentorConfig(config_file)
-        self.controller = PreProcessingController(self.config)
+        self.config = SegmentorConfig.initialize(config_file)
+        self.controller = PreProcessingController()
         self._window = None
         self._layout = None
         self._loading_dialog = None
