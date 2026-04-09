@@ -4,7 +4,7 @@ import os
 from modules.utils.config import SegmentorConfig
 from modules.utils.log_utils import get_dual_logger
 from modules.controllers import PipelineController
-from modules.models import pre_process_tools
+from modules.models import output_tools
 from .input_layout import create_input_layout_for_stage
 
 log = get_dual_logger(__name__)
@@ -13,7 +13,7 @@ class PipelineViewer:
 
     def __init__(self, config_file: str):
         config = SegmentorConfig.initialize(config_file)
-        config.input_file = self._get_pre_processed_data_file(config.input_file)
+        config.input_file = output_tools.get_pre_processing_output_las_path()
         self.controller = PipelineController()
         self._window = None
         self._layout = None  # left control panel (container)
@@ -32,12 +32,6 @@ class PipelineViewer:
         self._loading_dialog = None
         self._camera_initialized = False
         self._exit_after_message = False # Flag to exit the application after a success message is shown
-
-    def _get_pre_processed_data_file(self, input_file: str) -> str:
-        pre_processed_data_folder_path = pre_process_tools.get_pre_processed_data_folder_path(input_file)
-        pre_processed_data_file = os.path.join(pre_processed_data_folder_path, "output.las")
-        log.debug("Changed input file to %s", pre_processed_data_file)
-        return pre_processed_data_file
 
     def _update_chunk_header_label(self):
         if self._chunk_header_label is None:
