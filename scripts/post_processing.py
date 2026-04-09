@@ -2,7 +2,7 @@
 """
 Re-segment object points in a LAS file with DBSCAN: classification 5 → per-cluster 6, 7, …
 
-Reads the full file via LasWrapper (chunk merge), runs Open3D DBSCAN only on points
+Reads the full file via LasPipelineWrapper (chunk merge), runs Open3D DBSCAN only on points
 with classification 5 (objects), assigns sequential classifications starting at 6 for
 each cluster; DBSCAN noise remains 5. All other points and attributes are unchanged.
 
@@ -26,7 +26,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from modules.models.las_wrapper import LasWrapper  # noqa: E402
+from modules.models import LasPipelineWrapper  # noqa: E402
 from modules.models.ai_object_detector import (  # noqa: E402
     identify_object_from_views,
     merge_identified_objects_record,
@@ -119,7 +119,7 @@ def _take_isometric_screenshots(
     return out_paths["front_isometric"], out_paths["back_isometric"]
 
 
-def _merge_chunks(wrap: LasWrapper) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+def _merge_chunks(wrap: LasPipelineWrapper) -> tuple[np.ndarray, dict[str, np.ndarray]]:
     xyz_parts: list[np.ndarray] = []
     attr_parts: dict[str, list[np.ndarray]] = {}
 
@@ -141,7 +141,7 @@ def _merge_chunks(wrap: LasWrapper) -> tuple[np.ndarray, dict[str, np.ndarray]]:
 
 
 def _write_las(
-    wrap: LasWrapper,
+    wrap: LasPipelineWrapper,
     output_path: str,
     xyz: np.ndarray,
     merged_attrs: dict[str, np.ndarray],
@@ -372,7 +372,7 @@ def main() -> int:
         print("min_points must be >= 2.", file=sys.stderr)
         return 1
 
-    wrap = LasWrapper()
+    wrap = LasPipelineWrapper()
     xyz, merged_attrs = _merge_chunks(wrap)
 
     try:

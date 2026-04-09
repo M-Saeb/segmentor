@@ -42,7 +42,7 @@ class PipelineViewer:
     def _update_chunk_header_label(self):
         if self._chunk_header_label is None:
             return
-        lw = self.controller.las_wrapper
+        lw = self.controller.las_pipeline_wrapper
         total = getattr(lw, "_total_chunks", None)
         if total is None:
             self._chunk_header_label.text = "–"

@@ -238,7 +238,7 @@ def _write_las(
 ) -> None:
     """
     Write LAS in slices of ``chunk_size``, matching
-    ``LasWrapper.initialize_output_file`` + ``write_pcb_chunk_to_file`` (append).
+    ``LasPipelineWrapper.initialize_output_file`` + ``write_pcb_chunk_to_file`` (append).
 
     Optionally embeds a JSON VLR (user_id ``Segmentor``, record_id ``65001``) with
     ``segmentor_is_sorted`` and ``sort_mode`` to mark that this file was

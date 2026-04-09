@@ -6,7 +6,7 @@ from . import las_io
 
 log = log_utils.get_dual_logger(__name__)
 
-class LasWrapper:
+class LasPipelineWrapper:
 
     def __init__(
         self,
@@ -83,7 +83,7 @@ class LasWrapper:
     def get_current_chunk(self):
         if self.current_chunk is None:
             raise RuntimeError(
-                "LasWrapper current chunk is not initialized. "
+                "LasPipelineWrapper current chunk is not initialized. "
                 "Call iterate_chunk(0) once before using get_current_chunk()."
             )
         return self.current_chunk

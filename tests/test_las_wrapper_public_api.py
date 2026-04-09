@@ -1,4 +1,4 @@
-"""Regression tests for LasWrapper public API (see .cursor/skills/test-las-wrapper2-public-api/SKILL.md)."""
+"""Regression tests for LasPipelineWrapper public API (see .cursor/skills/test-las-wrapper2-public-api/SKILL.md)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import laspy
 import numpy as np
 import pytest
 
-from modules.models import LasWrapper
+from modules.models import LasPipelineWrapper
 from modules.utils.config import SegmentorConfig
 
 
@@ -43,7 +43,7 @@ def tiny_las_path(tmp_path):
 
 def _make_wrapper(tmp_path, tiny_las_path, chunk_size: int = 30, reset_classification: bool = True):
     cfg_path = _write_minimal_config(tmp_path, tiny_las_path, chunk_size, reset_classification)
-    return LasWrapper(SegmentorConfig(cfg_path))
+    return LasPipelineWrapper(SegmentorConfig(cfg_path))
 
 
 def test_init_sets_config_and_chunk_state(tmp_path, tiny_las_path):
@@ -164,6 +164,6 @@ def test_empty_file_no_chunks(tmp_path):
     las.z = np.array([], dtype=np.float64)
     las.write(str(empty))
     cfg = _write_minimal_config(tmp_path, empty, 10, True)
-    w = LasWrapper(SegmentorConfig(cfg))
+    w = LasPipelineWrapper(SegmentorConfig(cfg))
     assert w.iterate_chunk(0) is False
     assert list(w.iter_input_chunks()) == []

@@ -2,7 +2,7 @@ from typing import Dict
 
 from modules.utils.config import SegmentorConfig
 from modules.utils.pipeline import PipelineStage, Pipeline
-from modules.models import LasWrapper
+from modules.models import LasPipelineWrapper
 from modules.models import LasIteratorKDTree
 from modules.models import output_tools
 from modules.models import pcd_tools
@@ -17,9 +17,9 @@ log = get_dual_logger(__name__)
 class PipelineController:
     def __init__(self, *, require_setup_pipeline: bool = True):
         self.config = SegmentorConfig.get_instance()
-        self.las_wrapper = LasWrapper(iterator_class=LasIteratorKDTree)
-        if not self.las_wrapper.iterate_chunk(0):
-            log.warning("Could not initialize LasWrapper preview chunk; input may be empty.")
+        self.las_pipeline_wrapper = LasPipelineWrapper(iterator_class=LasIteratorKDTree)
+        if not self.las_pipeline_wrapper.iterate_chunk(0):
+            log.warning("Could not initialize LasPipelineWrapper preview chunk; input may be empty.")
         self.output_folder_path = output_tools.init_result_folder_path(use_existing_folder=True)
         self.full_las_path = output_tools.get_pipeline_output_las_path(self.output_folder_path)
         self.output_las_writer = None
@@ -153,12 +153,12 @@ class PipelineController:
         current_stage = self.get_current_setup_pipeline_stage()
         if current_stage is None:
             # No more stages; clear any previous snapshot.
-            self.las_wrapper.delete_snapshot()
+            self.las_pipeline_wrapper.delete_snapshot()
             return
 
         # Snapshot the current preview chunk as the immutable input state
         # for all preview runs of this stage.
-        self.las_wrapper.save_snapshot()
+        self.las_pipeline_wrapper.save_snapshot()
 
     def get_current_setup_pipeline_stage(self):
         if self.setup_pipeline.current_stage_index >= len(self.setup_pipeline.stages):
@@ -172,9 +172,9 @@ class PipelineController:
         On success, clears the stage snapshot and resets the setup pipeline to
         the first stage, since preview state is tied to the current chunk.
         """
-        if not self.las_wrapper.iterate_chunk(delta):
+        if not self.las_pipeline_wrapper.iterate_chunk(delta):
             return False
-        self.las_wrapper.delete_snapshot()
+        self.las_pipeline_wrapper.delete_snapshot()
         self.setup_pipeline.current_stage_index = 0
         return True
 
@@ -192,7 +192,7 @@ class PipelineController:
 
         # Always start from the snapshotted input for this stage so that
         # repeated previews with different parameters do not stack effects.
-        self.las_wrapper.restore_snapshot()
+        self.las_pipeline_wrapper.restore_snapshot()
 
         # Keep setup preview deterministic when repeatedly rerunning objects DBSCAN.
         if current_stage.name == constants.PIPELINE_OBJECTS_SEGMENTATION:
@@ -375,7 +375,7 @@ class PipelineController:
         # Start each full processing run with a fresh global cluster-id range.
         ObjectClusterIdManager.get_instance().reset(start=1)
 
-        for index, pcd, points_attributes in self.las_wrapper.iter_input_chunks():
+        for index, pcd, points_attributes in self.las_pipeline_wrapper.iter_input_chunks():
             for stage in self.process_pipeline.stages:
                 stage_kwargs = dict(stage.params)
                 if stage.name == constants.PIPELINE_OBJECTS_SEGMENTATION:
@@ -396,13 +396,13 @@ class PipelineController:
 
     def _pipeline_functions_wrapper(self, callback, **kwargs):
         pcd, points_attributes = callback(
-            *self.las_wrapper.get_current_chunk(),
+            *self.las_pipeline_wrapper.get_current_chunk(),
             **kwargs
         )
-        self.las_wrapper.set_current_chunk(pcd, points_attributes)
+        self.las_pipeline_wrapper.set_current_chunk(pcd, points_attributes)
 
     def get_preview_pcd(self, color="RGB"):
-        pcd, points_attributes = self.las_wrapper.get_current_chunk()
+        pcd, points_attributes = self.las_pipeline_wrapper.get_current_chunk()
         previewer = PCDPreviewer(pcd, points_attributes)
         previewer.apply_compression(
             max_points=self.config.previewer["maximum_points"]

@@ -36,7 +36,7 @@ bash run.sh
 
 The project follows a loose MVC-style structure:
 
-- **Models** (`modules/models/`): low-level LAS I/O (`las_wrapper.py`),
+- **Models** (`modules/models/`): low-level LAS I/O (`las_pipeline_wrapper.py`),
   point-cloud processing and classification (`pcd_tools.py`), and result
   generation (`output_tools.py`).
 - **Controller** (`modules/controller/`): builds the interactive *setup*

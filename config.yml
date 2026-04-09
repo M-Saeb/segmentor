@@ -29,8 +29,8 @@ ground_segmentation:
 
 ceiling_segmentation:
   enable: true
-  facing_up_threshold: 0.95
-  min_inlier_density: 15
+  facing_up_threshold: 0.1
+  min_inlier_density: 5
 
 wall_segmentation:
   enable: true

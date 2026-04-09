@@ -247,14 +247,6 @@ def _write_las(
     pcd: o3d.geometry.PointCloud,
     merged_attrs: dict[str, np.ndarray],
 ) -> None:
-    """
-    Write LAS in slices of ``chunk_size``, matching
-    ``LasWrapper.initialize_output_file`` + ``write_pcb_chunk_to_file`` (append).
-
-    Optionally embeds a JSON VLR (user_id ``Segmentor``, record_id ``65001``) with
-    ``segmentor_is_sorted`` and ``sort_mode`` to mark that this file was
-    pre-processed by reordering/sorting.
-    """
     n = len(pcd.points)
     if chunk_size <= 0:
         chunk_size = max(n, 1)

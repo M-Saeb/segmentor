@@ -4,7 +4,7 @@ import yaml
 from modules.utils import config
 from modules.models.ai_object_detector import identified_objects_yaml_path
 from modules.utils.log_utils import get_dual_logger
-from .las_tools.las_wrapper import LasWrapper
+from .las_tools.las_pipeline_wrapper import LasPipelineWrapper
 
 log = get_dual_logger(__name__)
 
@@ -69,9 +69,9 @@ def create_pipeline_yaml_file(pipeline_data: dict, result_folder_path: Union[str
     log.info("Wrote pipeline YAML to: %s", path)
     return path
 
-def create_las_output_file(output_las_path: str) -> LasWrapper:
+def create_las_output_file(output_las_path: str) -> LasPipelineWrapper:
     """Initialize output LAS file and return writer wrapper."""
     cfg = _resolve_cfg()
-    las_writer = LasWrapper(cfg)
+    las_writer = LasPipelineWrapper(cfg)
     las_writer.initialize_output_file(output_las_path)
     return las_writer
