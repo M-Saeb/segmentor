@@ -128,7 +128,7 @@ class LasWrapper:
         """
         las_io.init_las_file(
             full_path,
-            las_io.create_new_las_header(
+            las_io.create_pipeline_output_las_header(
                 las_io.get_original_las_header(self.input_file)
             )
         )
@@ -144,7 +144,7 @@ class LasWrapper:
             pcd,
             points_attributes,
             full_path,
-            las_io.create_new_las_header(
+            las_io.create_pipeline_output_las_header(
                 las_io.get_original_las_header(self.input_file)
             )
         )

@@ -741,11 +741,9 @@ def filter_noise_for_none_classified_points(pcd, points_attributes, nb_neighbors
 
     return new_pcd, new_points_attributes
 
-
 def _dbscan_cluster_mask(labels: np.ndarray) -> np.ndarray:
     """True where Open3D DBSCAN assigned a cluster id (>= 0); False for noise (-1)."""
     return np.asarray(labels, dtype=np.int64) >= 0
-
 
 def segment_objects_dbscan(pcd, points_attributes, eps, min_points):
     """

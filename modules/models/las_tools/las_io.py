@@ -23,6 +23,31 @@ def create_new_las_header(original_header: laspy.LasHeader) -> laspy.LasHeader:
     result.scales = original_header.scales
     return result
 
+
+def _header_has_dimension(header: laspy.LasHeader, name: str) -> bool:
+    return name.lower() in {d.lower() for d in header.point_format.dimension_names}
+
+
+def ensure_object_cluster_id_in_header(header: laspy.LasHeader) -> None:
+    """Register LAS Extra Bytes for per-point DBSCAN object cluster ids (0 = none)."""
+    if _header_has_dimension(header, "object_cluster_id"):
+        return
+    header.add_extra_dim(
+        laspy.ExtraBytesParams(
+            name="object_cluster_id",
+            type=np.int32,
+            description="DBSCAN cluster id; 0=none",
+        )
+    )
+
+
+def create_pipeline_output_las_header(original_header: laspy.LasHeader) -> laspy.LasHeader:
+    """Header for pipeline LAS output: input-derived header plus `object_cluster_id` when needed."""
+    result = create_new_las_header(original_header)
+    ensure_object_cluster_id_in_header(result)
+    return result
+
+
 def get_las_file_uuid(file_path: str) -> Union[uuid.UUID, None]:    
     to_include_headers = ["_version", "creation_date", "point_count", "scales", "offsets", "maxs", "mins", "offset_to_point_data"]
     header = get_original_las_header(file_path)
@@ -99,10 +124,13 @@ def write_chunk_las_file(
         las_chunk.x = points[:, 0]
         las_chunk.y = points[:, 1]
         las_chunk.z = points[:, 2]
+        n = len(points)
         for dim, arr in points_attributes.items():
             if dim in EXCLUDED_DIMENSIONS:
                 continue
             setattr(las_chunk, dim, arr)
+        if _header_has_dimension(header, "object_cluster_id") and "object_cluster_id" not in points_attributes:
+            las_chunk.object_cluster_id = np.zeros(n, dtype=np.int32)
         writer.append_points(las_chunk.points)
 
 def write_full_las_file(
