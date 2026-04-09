@@ -10,7 +10,7 @@ from modules.utils.log_utils import get_dual_logger
 
 log = get_dual_logger(__name__)
 
-IDENTIFIED_OBJECTS_FILENAME = "identified_objects.yml"
+IDENTIFIED_OBJECTS_FILENAME = "3_objects.yml"
 
 
 def identified_objects_yaml_path(output_folder_path: str) -> str:
@@ -41,12 +41,11 @@ def _parse_ai_label_from_response(text: str) -> str:
     return line or "unknown"
 
 def _map_ai_label_to_classification(ai_label: str) -> int:
-    if ai_label == "car":
+    normalized = str(ai_label).strip().lower()
+    if normalized == "car":
         return constants.PCB_CLASSIFICATION_CAR
-    elif ai_label == "empty" or ai_label == "unknown":
-        return constants.PCB_CLASSIFICATION_INIT
-    else:
-        return constants.PCB_CLASSIFICATION_OTHER_OBJECTS
+    # Post-processing is car-only: non-car detections remain generic objects.
+    return constants.PCB_CLASSIFICATION_OBJECTS
 
 def identify_object_from_views(
     front_path: str,
@@ -100,19 +99,20 @@ def identify_object_from_views(
         raw = getattr(msg, "content", "") if msg else str(response)
 
     ai_label = _parse_ai_label_from_response(raw)
+    normalized_ai_label = str(ai_label).strip().lower()
 
     return {
         "chunk_index": int(chunk_index),
         "cluster_id": int(cluster_id),
-        "classification": _map_ai_label_to_classification(ai_label),
-        "ai_label": ai_label,
+        "classification": _map_ai_label_to_classification(normalized_ai_label),
+        "ai_label": normalized_ai_label,
         "raw_response": raw.strip(),
     }
 
 
 def merge_identified_objects_record(output_folder_path: str, record: dict) -> None:
     """
-    Append one object record and update per-label counters in identified_objects.yml.
+    Append one object record and update per-label counters in 3_objects.yml.
     """
     path = identified_objects_yaml_path(output_folder_path)
     os.makedirs(output_folder_path, exist_ok=True)

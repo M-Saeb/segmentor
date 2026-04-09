@@ -39,7 +39,7 @@ def get_original_pcd(
 
     all_pcd = o3d.geometry.PointCloud()
     with laspy.open(original_path) as f:
-        for index, points in enumerate(f.chunk_iterator(20_000_000)):
+        for index, points in enumerate(f.chunk_iterator(10_000_000)):
             pcd = o3d.geometry.PointCloud()
             xyz = np.vstack((points.x, points.y, points.z)).T
             chunk_mask: np.ndarray | None = None
@@ -161,7 +161,6 @@ def inlier_mutliple_bound_boxes(
 def restore_original_points_in_inliers(
     inlier_pcd: o3d.geometry.PointCloud | np.ndarray,
     original_path: str,
-    voxel_size: float | None = None,
 ) -> o3d.geometry.PointCloud:
     """
     Return full-resolution points that lie in the same voxel regions as the downsampled inliers.

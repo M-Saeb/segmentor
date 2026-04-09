@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
 """
-Re-segment object points in a LAS file with DBSCAN: classification 5 → per-cluster 6, 7, …
-
-Reads the full file via LasPipelineWrapper (chunk merge), runs Open3D DBSCAN only on points
-with classification 5 (objects), assigns sequential classifications starting at 6 for
-each cluster; DBSCAN noise remains 5. All other points and attributes are unchanged.
-
-Run from the project root so `modules` imports resolve, e.g.:
-
-    python scripts/post_processing.py -i input.las -o output.las
+Stage-3 post-processing:
+- Read clustered objects from stage-2 output LAS (`object_cluster_id`),
+- Identify each cluster via VLM from front/back isometric views,
+- Relabel only detected cars,
+- Write `3_post_process.las` and `3_objects.yml`.
 """
 
 from __future__ import annotations
@@ -18,47 +14,34 @@ import os
 import sys
 from pathlib import Path
 
-import laspy
 import numpy as np
 import open3d as o3d
+import yaml
 
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from modules.models import LasPipelineWrapper  # noqa: E402
+from modules.models import output_tools  # noqa: E402
+from modules.models.las_tools import las_io  # noqa: E402
+from modules.models.las_tools.las_iterator import LasIteratorBasic  # noqa: E402
 from modules.models.ai_object_detector import (  # noqa: E402
     identify_object_from_views,
+    identified_objects_yaml_path,
     merge_identified_objects_record,
 )
+from toolbox.restore_origina_pcd import restore_original_points_in_inliers  # noqa: E402
 from modules.utils import config as config_module  # noqa: E402
 from modules.utils import constants  # noqa: E402
 from modules.utils import log_utils  # noqa: E402
 
 log = log_utils.get_dual_logger(__name__)
 
-_SKIP_DIMS = frozenset({"object_cluster_id"})
-
-
-def _mask_indices_for_object_vlm_view(
-    classification: np.ndarray,
-    object_cluster_id: np.ndarray,
-    cluster_id: int,
-) -> np.ndarray:
-    """Ground + selected object points only (same view policy as segment_objects)."""
-    classification = np.asarray(classification)
-    object_cluster_id = np.asarray(object_cluster_id, dtype=np.int32)
-    ground = classification == constants.PCB_CLASSIFICATION_GROUND
-    this_object = object_cluster_id == cluster_id
-    # return np.where(ground | this_object)[0]
-    return np.where(this_object)[0]
-
 
 def _apply_rgb_colors_to_pcd(
     pcd: o3d.geometry.PointCloud,
     points_attributes: dict[str, np.ndarray],
 ) -> None:
-    """Set pcd.colors from LAS red/green/blue attributes."""
     red = np.asarray(points_attributes.get("red"))
     green = np.asarray(points_attributes.get("green"))
     blue = np.asarray(points_attributes.get("blue"))
@@ -75,12 +58,7 @@ def _apply_rgb_colors_to_pcd(
 def _take_isometric_screenshots(
     pcd: o3d.geometry.PointCloud,
     dir_name: str,
-    file_prefix: str,
 ) -> tuple[str, str]:
-    """
-    Save front/back isometric PNGs and return paths:
-      (<dir>/<prefix>_front_isometric.png, <dir>/<prefix>_back_isometric.png)
-    """
     os.makedirs(dir_name, exist_ok=True)
     width, height = 640, 480
     renderer = o3d.visualization.rendering.OffscreenRenderer(width, height)
@@ -110,29 +88,40 @@ def _take_isometric_screenshots(
         eye = center + np.array([x_off, y_off, z_off], dtype=float)
         renderer.setup_camera(60.0, center, eye, up)
         img = renderer.render_to_image()
-        fname = f"{file_prefix}_{name}.png"
-        out_path = os.path.join(dir_name, fname)
+        out_path = os.path.join(dir_name, f"{name}.png")
         o3d.io.write_image(out_path, img)
         out_paths[name] = out_path
-        log.debug("Saved %s", out_path)
-
     return out_paths["front_isometric"], out_paths["back_isometric"]
 
 
-def _merge_chunks(wrap: LasPipelineWrapper) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+def _merge_chunks(input_path: str, chunk_size: int) -> tuple[np.ndarray, dict[str, np.ndarray]]:
     xyz_parts: list[np.ndarray] = []
     attr_parts: dict[str, list[np.ndarray]] = {}
 
-    for _index, pcd, points_attributes in wrap.iter_input_chunks():
-        log.info("Merging chunk %d", _index)
+    iterator = LasIteratorBasic(file_path=input_path, chunk_size=chunk_size)
+    total_chunks = iterator.get_total_items_number()
+    for index in range(total_chunks):
+        if not iterator.iterate_chunk(0 if index == 0 else 1):
+            break
+        pcd, points_attributes = iterator.get_current_chunk()
+        log.info("Merging chunk %d", index)
         xyz_parts.append(np.asarray(pcd.points, dtype=np.float64))
         for dim, arr in points_attributes.items():
             attr_parts.setdefault(dim, []).append(np.asarray(arr))
 
     if not xyz_parts:
+        # Fallback to raw reader in case iterator yielded nothing unexpectedly.
+        for index, (pcd, points_attributes) in enumerate(
+            las_io.read_chunk_las_file(input_path, chunk_size)
+        ):
+            log.info("Merging chunk %d (fallback reader)", index)
+            xyz_parts.append(np.asarray(pcd.points, dtype=np.float64))
+            for dim, arr in points_attributes.items():
+                attr_parts.setdefault(dim, []).append(np.asarray(arr))
+
+    if not xyz_parts:
         raise RuntimeError("No points were read from the input.")
 
-    log.info("Merged %d chunks", len(xyz_parts))
     xyz = np.vstack(xyz_parts)
     merged_attrs: dict[str, np.ndarray] = {
         dim: np.concatenate(chunks, axis=0) for dim, chunks in attr_parts.items()
@@ -141,264 +130,221 @@ def _merge_chunks(wrap: LasPipelineWrapper) -> tuple[np.ndarray, dict[str, np.nd
 
 
 def _write_las(
-    wrap: LasPipelineWrapper,
+    input_path: str,
+    chunk_size: int,
     output_path: str,
     xyz: np.ndarray,
     merged_attrs: dict[str, np.ndarray],
 ) -> None:
-    """Write LAS in slices of ``wrap.config.chunk_size`` (append), no sort VLR."""
     n = len(xyz)
-    chunk_size = int(wrap.config.chunk_size)
+    chunk_size = int(chunk_size) if chunk_size is not None else n
     if chunk_size <= 0:
         chunk_size = max(n, 1)
 
-    base_header = wrap._create_new_las_filer_header()
-    with laspy.open(output_path, mode="w", header=base_header) as _writer:
-        pass
-
-    log.info("Writing %d points to %s in chunks of %d", n, output_path, chunk_size)
+    original_header = las_io.get_original_las_header(input_path)
+    base_header = las_io.create_new_las_header(original_header)
+    las_io.init_las_file(output_path, base_header)
 
     for start in range(0, n, chunk_size):
         end = min(start + chunk_size, n)
-        new_las_header = wrap._create_new_las_filer_header()
-        with laspy.open(output_path, mode="a", header=new_las_header) as writer:
-            las_chunk = laspy.LasData(new_las_header)
-            las_chunk.x = xyz[start:end, 0]
-            las_chunk.y = xyz[start:end, 1]
-            las_chunk.z = xyz[start:end, 2]
-            for dim, arr in merged_attrs.items():
-                if dim in _SKIP_DIMS:
-                    continue
-                setattr(las_chunk, dim, arr[start:end])
-            writer.append_points(las_chunk.points)
-            log.debug("Appended points [%d, %d)", start, end)
+        chunk_pcd = o3d.geometry.PointCloud()
+        chunk_pcd.points = o3d.utility.Vector3dVector(xyz[start:end])
+        chunk_attrs = {dim: np.asarray(arr)[start:end] for dim, arr in merged_attrs.items()}
+        las_io.write_chunk_las_file(
+            pcd=chunk_pcd,
+            points_attributes=chunk_attrs,
+            full_path=output_path,
+            header=base_header,
+        )
 
 
-def _apply_dbscan_object_clusters(
-    merged_attrs: dict[str, np.ndarray],
-    xyz: np.ndarray,
-    eps: float,
-    min_points: int,
-) -> dict[str, np.ndarray]:
-    """Update ``merged_attrs['classification']`` in place for class-5 points."""
-    if "classification" not in merged_attrs:
-        raise KeyError("merged_attrs must contain 'classification'")
+def _resolve_io_paths(
+    cfg: config_module.SegmentorConfig,
+    input_override: str | None,
+    output_override: str | None,
+) -> tuple[str, str, str]:
+    result_cfg = getattr(cfg, "result", {}) or {}
+    result_folder = str(result_cfg.get("output_folder_path", "")).strip()
+    if result_folder:
+        result_folder = os.path.abspath(result_folder)
 
-    classification_attr = np.asarray(merged_attrs["classification"])
-    if classification_attr.shape[0] != len(xyz):
-        raise ValueError("classification length does not match point count")
+    if result_folder:
+        default_input = output_tools.get_pipeline_output_las_path(result_folder)
+    else:
+        default_input = str(getattr(cfg, "input_file", "2_pipeline.las"))
+    default_output = os.path.join(result_folder, "3_post_process.las") if result_folder else "3_post_process.las"
 
-    orig_dtype = classification_attr.dtype
-    classification_attr = classification_attr.copy()
-    obj_mask = classification_attr == constants.PCB_CLASSIFICATION_OBJECTS
-    n_obj = int(np.sum(obj_mask))
-    if n_obj == 0:
-        log.info("No points with classification %d (objects); output unchanged.", constants.PCB_CLASSIFICATION_OBJECTS)
-        return {
-            "object_cluster_id": np.zeros(len(xyz), dtype=np.int32),
-            "cluster_ids": np.array([], dtype=np.int32),
-        }
+    input_path = os.path.abspath(input_override) if input_override else os.path.abspath(default_input)
+    output_path = os.path.abspath(output_override) if output_override else os.path.abspath(default_output)
+    objects_folder = result_folder or os.path.dirname(output_path) or os.getcwd()
+    return input_path, output_path, os.path.abspath(objects_folder)
 
-    obj_indices = np.where(obj_mask)[0]
-    subset = o3d.geometry.PointCloud()
-    subset.points = o3d.utility.Vector3dVector(xyz[obj_mask])
-    labels = np.asarray(
-        subset.cluster_dbscan(eps=eps, min_points=min_points, print_progress=False)
-    )
 
-    raw_to_seq: dict[int, int] = {}
-    seq = 1
-    for raw in sorted(np.unique(labels[labels >= 0])):
-        raw_to_seq[int(raw)] = seq
-        seq += 1
+def _init_objects_yaml(output_folder_path: str) -> None:
+    os.makedirs(output_folder_path, exist_ok=True)
+    yml_path = identified_objects_yaml_path(output_folder_path)
+    if os.path.isfile(yml_path):
+        return
+    with open(yml_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump({"objects": [], "counters": {}}, f, sort_keys=False)
 
-    n_clustered = int(np.sum(labels >= 0))
-    n_noise = int(np.sum(labels < 0))
-    log.info(
-        "DBSCAN on %d object points: %d clustered, %d noise (-1); %d unique clusters.",
-        n_obj,
-        n_clustered,
-        n_noise,
-        len(raw_to_seq),
-    )
 
-    start = constants.PCB_CLASSIFICATION_OBJECTS_CLUSTER_START
-    max_class = 30
-    class_span = max_class - start + 1  # 25 values: 6..30
-    object_cluster_id = np.zeros(len(xyz), dtype=np.int32)
-    for j, gidx in enumerate(obj_indices):
-        lab = int(labels[j])
-        if lab < 0:
-            continue
-        s = raw_to_seq[lab]
-        wrapped_class = start + ((s - 1) % class_span)
-        classification_attr[gidx] = wrapped_class
-        object_cluster_id[gidx] = int(s)
-
-    merged_attrs["classification"] = classification_attr.astype(orig_dtype, copy=False)
-    return {
-        "object_cluster_id": object_cluster_id,
-        "cluster_ids": np.asarray(sorted(raw_to_seq.values()), dtype=np.int32),
-    }
+def _cluster_ids_from_attributes(merged_attrs: dict[str, np.ndarray], n_points: int) -> np.ndarray:
+    if "object_cluster_id" not in merged_attrs:
+        raise KeyError(
+            "Input LAS is missing 'object_cluster_id'. Run pipeline stage with segment_objects_dbscan first."
+        )
+    object_cluster_id = np.asarray(merged_attrs["object_cluster_id"], dtype=np.int32)
+    if object_cluster_id.shape[0] != n_points:
+        raise ValueError("object_cluster_id length does not match point count.")
+    return np.asarray(sorted(np.unique(object_cluster_id[object_cluster_id > 0])), dtype=np.int32)
 
 
 def _run_object_vlm_post_processing(
     merged_attrs: dict[str, np.ndarray],
     xyz: np.ndarray,
-    object_cluster_id: np.ndarray,
-    cluster_ids: np.ndarray,
+    original_input_path: str,
     output_folder_path: str,
-    ollama_model: str = "gemma3:4b",
+    ollama_model: str,
+    vlm_traces_subdir: str,
 ) -> None:
-    """Per-cluster screenshots + VLM classification + YAML merge."""
+    classification = np.asarray(merged_attrs.get("classification"))
+    if classification.shape[0] != len(xyz):
+        raise ValueError("classification length does not match point count.")
+
+    cluster_ids = _cluster_ids_from_attributes(merged_attrs, len(xyz))
+    _init_objects_yaml(output_folder_path)
     if len(cluster_ids) == 0:
+        log.info("No object clusters found in stage-2 output.")
         return
-    os.makedirs(output_folder_path, exist_ok=True)
-    traces_dir = os.path.join(output_folder_path, "vlm_object_traces")
+
+    traces_dir = os.path.join(output_folder_path, vlm_traces_subdir)
     os.makedirs(traces_dir, exist_ok=True)
 
+    object_cluster_id = np.asarray(merged_attrs["object_cluster_id"], dtype=np.int32)
     pcd_all = o3d.geometry.PointCloud()
     pcd_all.points = o3d.utility.Vector3dVector(xyz)
-    cls_arr = np.asarray(merged_attrs["classification"])
-    npt = len(cls_arr)
+    n_points = len(xyz)
 
-    for cid in cluster_ids:
-        cid = int(cid)
+    for cluster_id in cluster_ids.tolist():
+        cluster_mask = object_cluster_id == int(cluster_id)
+        if not np.any(cluster_mask):
+            log.warning("Skipping empty cluster %s", cluster_id)
+            continue
+        indices = np.where(cluster_mask)[0]
+        view_pcd = pcd_all.select_by_index(indices.tolist())
+
+        view_attrs: dict[str, np.ndarray] = {}
+        for dim, arr in merged_attrs.items():
+            arr_np = np.asarray(arr)
+            if arr_np.shape[0] == n_points:
+                view_attrs[dim] = arr_np[indices]
+            else:
+                view_attrs[dim] = arr
+
         try:
-            indices = _mask_indices_for_object_vlm_view(cls_arr, object_cluster_id, cid)
-            if len(indices) == 0:
-                log.warning("Object VLM post-processing: empty view for cluster %s; skipping", cid)
-                continue
+            _apply_rgb_colors_to_pcd(view_pcd, view_attrs)
+        except ValueError as ex:
+            log.warning("Cluster %s has invalid RGB (%s); skipping VLM.", cluster_id, ex)
+            continue
 
-            view_pcd = pcd_all.select_by_index(indices)
-            view_attrs: dict[str, np.ndarray] = {}
-            for k, v in merged_attrs.items():
-                arr = np.asarray(v)
-                if arr.shape[0] == npt:
-                    view_attrs[k] = arr[indices]
-                else:
-                    view_attrs[k] = v
-
-            try:
-                _apply_rgb_colors_to_pcd(view_pcd, view_attrs)
-            except ValueError as ex:
-                log.warning(
-                    "Object VLM post-processing: RGB unavailable for cluster %s (%s); skipping.",
-                    cid,
-                    ex,
-                )
-                continue
-
-            prefix = f"pp_{cid:05d}"
-
-            front_path, back_path = _take_isometric_screenshots(view_pcd, traces_dir, prefix)
-            try:
-                record = identify_object_from_views(
-                    front_path,
-                    back_path,
-                    cluster_id=cid,
-                    chunk_index=0,
-                    ollama_model=ollama_model,
-                )
-                log.info("VLM: identified %s as %s", cid, record["ai_label"])
-                predicted_class = record["classification"]
-                cluster_point_mask = object_cluster_id == cid
-                if np.any(cluster_point_mask):
-                    merged_attrs["classification"][cluster_point_mask] = predicted_class
-                merge_identified_objects_record(output_folder_path, record)
-            except Exception as ex:
-                log.warning(
-                    "Object VLM post-processing: VLM/YAML failed for cluster %s: %s",
-                    cid,
-                    ex,
-                    exc_info=True,
-                )
+        # Sandbox-style restoration: use cluster inliers to recover original points in the same bbox.
+        try:
+            restored_cluster_pcd = restore_original_points_in_inliers(
+                view_pcd,
+                original_input_path,
+            )
+            if len(restored_cluster_pcd.points) > 0:
+                screenshot_pcd = restored_cluster_pcd
+            else:
+                screenshot_pcd = view_pcd
         except Exception as ex:
             log.warning(
-                "Object VLM post-processing failed for cluster %s: %s",
-                cid,
+                "Failed restoring original points for cluster %s (%s); using pipeline cluster points.",
+                cluster_id,
                 ex,
-                exc_info=True,
             )
+            screenshot_pcd = view_pcd
+
+        front_path, back_path = _take_isometric_screenshots(
+            screenshot_pcd,
+            traces_dir,
+        )
+        try:
+            record = identify_object_from_views(
+                front_path,
+                back_path,
+                cluster_id=int(cluster_id),
+                chunk_index=0,
+                ollama_model=ollama_model,
+            )
+            merge_identified_objects_record(output_folder_path, record)
+            if int(record["classification"]) == constants.PCB_CLASSIFICATION_CAR:
+                classification[cluster_mask] = constants.PCB_CLASSIFICATION_CAR
+                log.info("Cluster %s identified as car.", cluster_id)
+            else:
+                log.info("Cluster %s identified as %s.", cluster_id, record.get("ai_label"))
+        except Exception as ex:
+            log.warning("VLM call failed for cluster %s: %s", cluster_id, ex, exc_info=True)
+
+    merged_attrs["classification"] = classification
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="DBSCAN re-segmentation of LAS points classified as objects (5) into classes 6, 7, …"
+        description="Run stage-3 post-processing on stage-2 cluster IDs and classify cars with VLM."
     )
-    parser.add_argument("--input", "-i", required=True, help="Input .las or .laz path")
-    parser.add_argument("--output", "-o", required=True, help="Output .las path")
-    parser.add_argument(
-        "--config",
-        "-c",
-        default="config.yml",
-        help="YAML config path (chunk_size and objects_segmentation defaults)",
-    )
-    parser.add_argument(
-        "--eps",
-        type=float,
-        default=None,
-        metavar="E",
-        help="DBSCAN eps (default: objects_segmentation.eps from config)",
-    )
-    parser.add_argument(
-        "--min-points",
-        type=int,
-        default=None,
-        metavar="N",
-        help="DBSCAN min_points (default: objects_segmentation.min_points from config)",
-    )
+    parser.add_argument("--config", "-c", default="config.yml", help="Config YAML path.")
+    parser.add_argument("--input", "-i", default=None, help="Optional override for input LAS path.")
+    parser.add_argument("--output", "-o", default=None, help="Optional override for output LAS path.")
     args = parser.parse_args()
 
-    input_path = os.path.abspath(args.input)
-    output_path = os.path.abspath(args.output)
+    config_path = os.path.abspath(args.config)
+    if not os.path.isfile(config_path):
+        print(f"Config not found: {config_path}", file=sys.stderr)
+        return 1
+    cfg = config_module.SegmentorConfig.initialize(config_path)
+    input_path, output_path, objects_folder_path = _resolve_io_paths(cfg, args.input, args.output)
     if not os.path.isfile(input_path):
         print(f"Input not found: {input_path}", file=sys.stderr)
         return 1
-
-    cfg = config_module.SegmentorConfig.initialize(args.config)
-    cfg.input_file = input_path
-    cfg.reset_classification = False
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    os.makedirs(objects_folder_path, exist_ok=True)
 
     obj_cfg = getattr(cfg, "objects_segmentation", {}) or {}
-    eps = float(args.eps if args.eps is not None else obj_cfg.get("eps", 0.05))
-    min_points = int(
-        args.min_points if args.min_points is not None else obj_cfg.get("min_points", 10)
-    )
-    if eps <= 0:
-        print("eps must be positive.", file=sys.stderr)
+    ollama_model = str(obj_cfg.get("ollama_model", "gemma3:4b"))
+    vlm_traces_subdir = str(obj_cfg.get("vlm_traces_subdir", "vlm_object_traces"))
+    original_input_path = os.path.abspath(str(getattr(cfg, "input_file", "")).strip())
+    if not original_input_path or not os.path.isfile(original_input_path):
+        print(
+            "Config input_file must point to the original LAS used for restoration.",
+            file=sys.stderr,
+        )
         return 1
-    if min_points < 2:
-        print("min_points must be >= 2.", file=sys.stderr)
-        return 1
-
-    wrap = LasPipelineWrapper()
-    xyz, merged_attrs = _merge_chunks(wrap)
 
     try:
-        dbscan_meta = _apply_dbscan_object_clusters(merged_attrs, xyz, eps=eps, min_points=min_points)
-    except KeyError as e:
-        print(f"Missing required attribute: {e}", file=sys.stderr)
-        return 1
-
-    result_cfg = getattr(cfg, "result", {}) or {}
-    output_folder_path = str(result_cfg.get("output_folder_path", "")).strip()
-    if output_folder_path:
+        xyz, merged_attrs = _merge_chunks(input_path=input_path, chunk_size=int(cfg.chunk_size))
         _run_object_vlm_post_processing(
             merged_attrs=merged_attrs,
             xyz=xyz,
-            object_cluster_id=np.asarray(dbscan_meta["object_cluster_id"], dtype=np.int32),
-            cluster_ids=np.asarray(dbscan_meta["cluster_ids"], dtype=np.int32),
-            output_folder_path=output_folder_path,
-            ollama_model="gemma3:4b",
+            original_input_path=original_input_path,
+            output_folder_path=objects_folder_path,
+            ollama_model=ollama_model,
+            vlm_traces_subdir=vlm_traces_subdir,
         )
-    else:
-        log.warning(
-            "result.output_folder_path is not set in config; skipping VLM screenshots/YAML."
-        )
+    except (KeyError, ValueError, RuntimeError) as ex:
+        print(str(ex), file=sys.stderr)
+        return 1
 
-    _write_las(wrap, output_path, xyz, merged_attrs)
+    _write_las(
+        input_path=input_path,
+        chunk_size=int(cfg.chunk_size),
+        output_path=output_path,
+        xyz=xyz,
+        merged_attrs=merged_attrs,
+    )
     print(f"Wrote {len(xyz):,} points to {output_path}")
+    print(f"Wrote object counters to {identified_objects_yaml_path(objects_folder_path)}")
     return 0
 
 
