@@ -27,6 +27,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from modules.controllers.pipeline.main import PipelineController
+from modules.models import output_tools
 from modules.utils.config import SegmentorConfig
 from modules.utils.log_utils import get_dual_logger
 
@@ -68,6 +69,8 @@ def main() -> int:
         return 1
 
     SegmentorConfig.initialize(config_path)
+    config = SegmentorConfig.get_instance()
+    config.input_file = output_tools.get_pre_processing_output_las_path()
     controller = PipelineController(require_setup_pipeline=False)
     try:
         controller.load_process_pipeline_from_dict(pipeline_data)
