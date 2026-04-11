@@ -4,7 +4,7 @@ Stage-3 post-processing:
 - Read clustered objects from stage-2 output LAS (`object_cluster_id`),
 - Identify each cluster via VLM from front/back isometric views,
 - Relabel only detected cars,
-- Write `3_post_process.las` and `3_objects.yml`.
+- Write `3_post_process.las` and `3_objects.yml` (``cars`` / ``other_objects`` with bounds per cluster).
 """
 
 from __future__ import annotations
@@ -26,9 +26,9 @@ from modules.models import output_tools  # noqa: E402
 from modules.models.las_tools import las_io  # noqa: E402
 from modules.models.las_tools.las_iterator import LasIteratorBasic  # noqa: E402
 from modules.models.ai_object_detector import (  # noqa: E402
+    append_identified_cluster_to_objects_yaml,
     identify_object_from_views,
     identified_objects_yaml_path,
-    merge_identified_objects_record,
 )
 from toolbox.restore_origina_pcd import restore_original_points_in_inliers  # noqa: E402
 from modules.utils import config as config_module  # noqa: E402
@@ -92,6 +92,14 @@ def _take_isometric_screenshots(
         o3d.io.write_image(out_path, img)
         out_paths[name] = out_path
     return out_paths["front_isometric"], out_paths["back_isometric"]
+
+
+def _axis_aligned_bounds_from_pcd(pcd: o3d.geometry.PointCloud) -> dict[str, list[float]]:
+    bbox = pcd.get_axis_aligned_bounding_box()
+    return {
+        "min": np.asarray(bbox.get_min_bound(), dtype=float).tolist(),
+        "max": np.asarray(bbox.get_max_bound(), dtype=float).tolist(),
+    }
 
 
 def _merge_chunks(input_path: str, chunk_size: int) -> tuple[np.ndarray, dict[str, np.ndarray]]:
@@ -185,8 +193,12 @@ def _init_objects_yaml(output_folder_path: str) -> None:
     yml_path = identified_objects_yaml_path(output_folder_path)
     if os.path.isfile(yml_path):
         return
+    empty = {
+        "cars": {"total": 0, "items": []},
+        "other_objects": {"total": 0, "items": []},
+    }
     with open(yml_path, "w", encoding="utf-8") as f:
-        yaml.safe_dump({"objects": [], "counters": {}}, f, sort_keys=False)
+        yaml.safe_dump(empty, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 
 def _cluster_ids_from_attributes(merged_attrs: dict[str, np.ndarray], n_points: int) -> np.ndarray:
@@ -278,7 +290,8 @@ def _run_object_vlm_post_processing(
                 chunk_index=0,
                 ollama_model=ollama_model,
             )
-            merge_identified_objects_record(output_folder_path, record)
+            record["bounds"] = _axis_aligned_bounds_from_pcd(screenshot_pcd)
+            append_identified_cluster_to_objects_yaml(output_folder_path, record)
             if int(record["classification"]) == constants.PCB_CLASSIFICATION_CAR:
                 classification[cluster_mask] = constants.PCB_CLASSIFICATION_CAR
                 log.info("Cluster %s identified as car.", cluster_id)
@@ -344,7 +357,7 @@ def main() -> int:
         merged_attrs=merged_attrs,
     )
     print(f"Wrote {len(xyz):,} points to {output_path}")
-    print(f"Wrote object counters to {identified_objects_yaml_path(objects_folder_path)}")
+    print(f"Wrote object registry to {identified_objects_yaml_path(objects_folder_path)}")
     return 0
 
 

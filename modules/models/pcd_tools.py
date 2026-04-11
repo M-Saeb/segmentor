@@ -3,10 +3,6 @@ import numpy as np
 import open3d as o3d
 from scipy.spatial import ConvexHull
 from modules.models.object_cluster_id_manager import ObjectClusterIdManager
-from modules.models.ai_object_detector import (
-    identify_object_from_views,
-    merge_identified_objects_record,
-)
 from modules.utils.log_utils import get_dual_logger
 from modules.utils import constants
 
