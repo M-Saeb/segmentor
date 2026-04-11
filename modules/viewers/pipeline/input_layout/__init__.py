@@ -9,7 +9,6 @@ _STAGE_NAME_TO_LAYOUT = {
     constants.PIPELINE_GROUND_SEGMENTATION: InputLayoutGroundSegmentation,
     constants.PIPELINE_CEILING_SEGMENTATION: InputLayoutCeilingSegmentation,
     constants.PIPELINE_WALL_SEGMENTATION: InputLayoutWallSegmentation,
-    constants.PIPELINE_OBJECTS_SEGMENTATION: InputLayoutObjectsSegmentation,
 }
 
 

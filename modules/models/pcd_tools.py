@@ -837,6 +837,8 @@ def take_isometric_screenshots(pcd, dir_name, file_prefix=""):
 
     width, height = 640, 480
     renderer = o3d.visualization.rendering.OffscreenRenderer(width, height)
+    # Light blue clear color (RGBA, linear)
+    renderer.scene.set_background(np.array([0.8, 0.9, 1.0, 1.0], dtype=float))
 
     mat = o3d.visualization.rendering.MaterialRecord()
     mat.shader = "defaultUnlit"

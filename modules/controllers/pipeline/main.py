@@ -6,7 +6,6 @@ from modules.models import LasPipelineWrapper
 from modules.models import LasIteratorKDTree
 from modules.models import output_tools
 from modules.models import pcd_tools
-from modules.models.object_cluster_id_manager import ObjectClusterIdManager
 from modules.utils.log_utils import get_dual_logger
 from modules.utils import constants
 from .pcd_previewer import PCDPreviewer
@@ -37,7 +36,7 @@ class PipelineController:
 
         The setup pipeline operates on a single preview chunk, allowing the user
         to tune parameters stage-by-stage (ground/ceiling/wall
-        segmentation, object clustering, etc.). Its structure is later cloned into a "process"
+        segmentation, etc.). Its structure is later cloned into a "process"
         pipeline that is applied to every chunk of the input file.
         """
         new_pipeline = Pipeline(kind="setup")
@@ -53,10 +52,6 @@ class PipelineController:
         wall_cfg = getattr(self.config, "wall_segmentation", {})
         if wall_cfg.get("enable", False):
             new_pipeline.stages.append(self._make_wall_segmentation_stage())
-
-        objects_cfg = getattr(self.config, "objects_segmentation", {})
-        if objects_cfg.get("enable", False):
-            new_pipeline.stages.append(self._make_objects_segmentation_stage())
 
         if len(new_pipeline.stages) == 0:
             raise ValueError("No stages for the setup pipeline were created")
@@ -127,27 +122,6 @@ class PipelineController:
             params=params,
         )
 
-    def _make_objects_segmentation_stage(self) -> PipelineStage:
-        obj_cfg = getattr(self.config, "objects_segmentation", {})
-        params: Dict[str, object] = {
-            "eps": obj_cfg.get("eps", 0.05),
-            "min_points": int(obj_cfg.get("min_points", 10)),
-            "output_folder_path": self.output_folder_path,
-            "chunk_index": 0,
-            "ollama_model": obj_cfg.get("ollama_model", "gemma3:4b"),
-            "vlm_traces_subdir": obj_cfg.get("vlm_traces_subdir", "vlm_object_traces"),
-            # Setup preview: DBSCAN only; VLM runs in run_process_pipeline_on_all_chunks only.
-            "enable_vlm": False,
-        }
-        return PipelineStage(
-            name=constants.PIPELINE_OBJECTS_SEGMENTATION,
-            func=lambda **kwargs: self._pipeline_functions_wrapper(
-                pcd_tools.segment_objects,
-                **kwargs,
-            ),
-            params=params,
-        )
-
     def switch_to_next_setup_pipeline_stage(self):
         self.setup_pipeline.current_stage_index += 1
         current_stage = self.get_current_setup_pipeline_stage()
@@ -193,10 +167,6 @@ class PipelineController:
         # Always start from the snapshotted input for this stage so that
         # repeated previews with different parameters do not stack effects.
         self.las_pipeline_wrapper.restore_snapshot()
-
-        # Keep setup preview deterministic when repeatedly rerunning objects DBSCAN.
-        if current_stage.name == constants.PIPELINE_OBJECTS_SEGMENTATION:
-            ObjectClusterIdManager.get_instance().reset(start=1)
 
         # Merge stored params with any explicit overrides
         call_kwargs = {**current_stage.params, **kwargs}
@@ -263,8 +233,6 @@ class PipelineController:
                     f"Supported names: {sorted(constants.KNOWN_PROCESS_STAGE_NAMES)}"
                 )
             params = dict(entry.get("params") or {})
-            if name == constants.PIPELINE_OBJECTS_SEGMENTATION:
-                params = self._merge_objects_segmentation_pipeline_params(params)
 
             placeholder = PipelineStage(
                 name=name,
@@ -278,19 +246,6 @@ class PipelineController:
             raise ValueError("No enabled stages in process pipeline data")
 
         self.process_pipeline = process_pipeline
-
-    def _merge_objects_segmentation_pipeline_params(self, params: Dict[str, object]) -> Dict[str, object]:
-        obj_cfg = getattr(self.config, "objects_segmentation", {})
-        defaults: Dict[str, object] = {
-            "eps": obj_cfg.get("eps", 0.05),
-            "min_points": int(obj_cfg.get("min_points", 10)),
-            "ollama_model": obj_cfg.get("ollama_model", "gemma3:4b"),
-            "vlm_traces_subdir": obj_cfg.get("vlm_traces_subdir", "vlm_object_traces"),
-        }
-        merged = {**defaults, **params}
-        merged["output_folder_path"] = self.output_folder_path
-        merged["chunk_index"] = 0
-        return merged
 
     def _make_process_stage(self, setup_stage: PipelineStage) -> PipelineStage:
         """
@@ -310,8 +265,6 @@ class PipelineController:
             func = self._process_ceiling_segmentation_stage
         elif name == constants.PIPELINE_WALL_SEGMENTATION:
             func = self._process_wall_segmentation_stage
-        elif name == constants.PIPELINE_OBJECTS_SEGMENTATION:
-            func = self._process_objects_segmentation_stage
         else:
             # Fallback: reuse the same callable, assuming it accepts
             # (pcd, points_attributes, **params) for processing as well.
@@ -341,13 +294,6 @@ class PipelineController:
             **kwargs
         )
 
-    def _process_objects_segmentation_stage(self, pcd, points_attributes, **kwargs):
-        return pcd_tools.segment_objects(
-            pcd,
-            points_attributes,
-            **kwargs
-        )
-
     def run_process_pipeline_on_all_chunks(self):
         """
         Execute the finalized process pipeline on every input chunk.
@@ -372,14 +318,9 @@ class PipelineController:
             output_las_path=self.full_las_path,
         )
 
-        # Start each full processing run with a fresh global cluster-id range.
-        ObjectClusterIdManager.get_instance().reset(start=1)
-
         for index, pcd, points_attributes in self.las_pipeline_wrapper.iter_input_chunks():
             for stage in self.process_pipeline.stages:
                 stage_kwargs = dict(stage.params)
-                if stage.name == constants.PIPELINE_OBJECTS_SEGMENTATION:
-                    stage_kwargs["chunk_index"] = index
                 pcd, points_attributes = stage.func(
                     pcd=pcd,
                     points_attributes=points_attributes,
