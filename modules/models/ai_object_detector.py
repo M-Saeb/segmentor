@@ -42,10 +42,12 @@ def _parse_ai_label_from_response(text: str) -> str:
 
 def _map_ai_label_to_classification(ai_label: str) -> int:
     normalized = str(ai_label).strip().lower()
-    if normalized == "car":
+    if normalized in ["car", "truck", "bus" "motorcycle", "bike", "bicycle"]:
         return constants.PCB_CLASSIFICATION_CAR
-    # Post-processing is car-only: non-car detections remain generic objects.
-    return constants.PCB_CLASSIFICATION_OBJECTS
+    elif normalized in ["empty", "unknown", "structure", "none", "stairs", "vent", "pillar", "ground", "wall", "ceiling"]:
+        return constants.PCB_CLASSIFICATION_STRUCTURE
+    else:
+        return constants.PCB_CLASSIFICATION_OTHER_OBJECTS
 
 def identify_object_from_views(
     front_path: str,
