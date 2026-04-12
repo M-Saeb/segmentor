@@ -16,8 +16,6 @@ from pathlib import Path
 
 import numpy as np
 import open3d as o3d
-import yaml
-
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -26,9 +24,11 @@ from modules.models import output_tools  # noqa: E402
 from modules.models.las_tools import las_io  # noqa: E402
 from modules.models.las_tools.las_iterator import LasIteratorBasic  # noqa: E402
 from modules.models.ai_object_detector import (  # noqa: E402
-    append_identified_cluster_to_objects_yaml,
+    empty_objects_registry,
     identify_object_from_views,
     identified_objects_yaml_path,
+    register_identified_cluster,
+    write_identified_objects_yaml,
 )
 from toolbox.restore_origina_pcd import restore_original_points_in_inliers  # noqa: E402
 from modules.utils import config as config_module  # noqa: E402
@@ -188,19 +188,6 @@ def _resolve_io_paths(
     return input_path, output_path, os.path.abspath(objects_folder)
 
 
-def _init_objects_yaml(output_folder_path: str) -> None:
-    os.makedirs(output_folder_path, exist_ok=True)
-    yml_path = identified_objects_yaml_path(output_folder_path)
-    if os.path.isfile(yml_path):
-        return
-    empty = {
-        "cars": {"total": 0, "items": []},
-        "other_objects": {"total": 0, "items": []},
-    }
-    with open(yml_path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(empty, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-
-
 def _cluster_ids_from_attributes(merged_attrs: dict[str, np.ndarray], n_points: int) -> np.ndarray:
     if "object_cluster_id" not in merged_attrs:
         raise KeyError(
@@ -225,9 +212,11 @@ def _run_object_vlm_post_processing(
         raise ValueError("classification length does not match point count.")
 
     cluster_ids = _cluster_ids_from_attributes(merged_attrs, len(xyz))
-    _init_objects_yaml(output_folder_path)
+    os.makedirs(output_folder_path, exist_ok=True)
+    registry = empty_objects_registry()
     if len(cluster_ids) == 0:
         log.info("No object clusters found in stage-2 output.")
+        write_identified_objects_yaml(output_folder_path, registry)
         return
 
     traces_dir = os.path.join(output_folder_path, vlm_traces_subdir)
@@ -291,7 +280,7 @@ def _run_object_vlm_post_processing(
                 ollama_model=ollama_model,
             )
             record["bounds"] = _axis_aligned_bounds_from_pcd(screenshot_pcd)
-            append_identified_cluster_to_objects_yaml(output_folder_path, record)
+            register_identified_cluster(registry, record)
             if int(record["classification"]) == constants.PCB_CLASSIFICATION_CAR:
                 classification[cluster_mask] = constants.PCB_CLASSIFICATION_CAR
                 log.info("Cluster %s identified as car.", cluster_id)
@@ -300,6 +289,7 @@ def _run_object_vlm_post_processing(
         except Exception as ex:
             log.warning("VLM call failed for cluster %s: %s", cluster_id, ex, exc_info=True)
 
+    write_identified_objects_yaml(output_folder_path, registry)
     merged_attrs["classification"] = classification
 
 

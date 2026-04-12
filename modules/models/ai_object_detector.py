@@ -42,7 +42,7 @@ def _parse_ai_label_from_response(text: str) -> str:
 
 def _map_ai_label_to_classification(ai_label: str) -> int:
     normalized = str(ai_label).strip().lower()
-    if normalized in ["car", "truck", "bus" "motorcycle", "bike", "bicycle"]:
+    if normalized in ["car", "truck", "bus", "motorcycle", "bike", "bicycle"]:
         return constants.PCB_CLASSIFICATION_CAR
     elif normalized in ["empty", "unknown", "structure", "none", "stairs", "vent", "pillar", "ground", "wall", "ceiling"]:
         return constants.PCB_CLASSIFICATION_STRUCTURE
@@ -112,7 +112,7 @@ def identify_object_from_views(
     }
 
 
-def _empty_objects_registry() -> dict:
+def empty_objects_registry() -> dict:
     return {
         "cars": {"total": 0, "items": []},
         "other_objects": {"total": 0, "items": []},
@@ -125,67 +125,30 @@ def _bucket_key_for_record(record: dict) -> str:
     return "other_objects"
 
 
-def _normalize_objects_registry(loaded: dict | None) -> dict:
-    """Build cars/other_objects registry from YAML. Migrates legacy ``objects``/``counters`` files."""
-    if not isinstance(loaded, dict):
-        return _empty_objects_registry()
-
-    cars_block = loaded.get("cars")
-    other_block = loaded.get("other_objects")
-    if isinstance(cars_block, dict) and isinstance(other_block, dict):
-        car_items = list(cars_block.get("items") or [])
-        other_items = list(other_block.get("items") or [])
-        return {
-            "cars": {"total": len(car_items), "items": car_items},
-            "other_objects": {"total": len(other_items), "items": other_items},
-        }
-
-    legacy = loaded.get("objects")
-    if isinstance(legacy, list):
-        reg = _empty_objects_registry()
-        for item in legacy:
-            if not isinstance(item, dict):
-                continue
-            reg[_bucket_key_for_record(item)]["items"].append(item)
-        reg["cars"]["total"] = len(reg["cars"]["items"])
-        reg["other_objects"]["total"] = len(reg["other_objects"]["items"])
-        return reg
-
-    return _empty_objects_registry()
+def _slim_record_for_yaml(record: dict) -> dict:
+    return {
+        "cluster_id": int(record["cluster_id"]),
+        "ai_label": str(record.get("ai_label", "")),
+        "bounds": record["bounds"],
+    }
 
 
-def append_identified_cluster_to_objects_yaml(output_folder_path: str, record: dict) -> None:
-    """
-    Append one cluster identification to ``3_objects.yml`` under ``cars`` or ``other_objects``.
+def register_identified_cluster(registry: dict, record: dict) -> None:
+    """Append ``cluster_id``, ``ai_label``, and ``bounds`` to the appropriate bucket; updates ``total`` counts."""
+    bucket = _bucket_key_for_record(record)
+    registry[bucket]["items"].append(_slim_record_for_yaml(record))
+    registry["cars"]["total"] = len(registry["cars"]["items"])
+    registry["other_objects"]["total"] = len(registry["other_objects"]["items"])
 
-    Each bucket has ``total`` (always ``len(items)``) and ``items`` (list of dicts). Items should
-    include VLM fields plus ``bounds`` with ``min``/``max`` XYZ lists from the axis-aligned box;
-    callers supply bounds. Legacy rows migrated from the old ``objects`` list may omit ``bounds``.
-    """
+
+def write_identified_objects_yaml(output_folder_path: str, registry: dict) -> None:
     path = identified_objects_yaml_path(output_folder_path)
     os.makedirs(output_folder_path, exist_ok=True)
-
-    data = _empty_objects_registry()
-    if os.path.isfile(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                loaded = yaml.safe_load(f)
-            data = _normalize_objects_registry(loaded)
-        except Exception as ex:
-            log.warning("append_identified_cluster_to_objects_yaml: could not read %s: %s", path, ex)
-
-    bucket = _bucket_key_for_record(record)
-    data[bucket]["items"].append(record)
-    data["cars"]["total"] = len(data["cars"]["items"])
-    data["other_objects"]["total"] = len(data["other_objects"]["items"])
-
     with open(path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-
+        yaml.safe_dump(registry, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
     log.info(
-        "Updated %s (bucket=%s cars=%d other=%d)",
+        "Wrote %s (cars=%d other=%d)",
         path,
-        bucket,
-        data["cars"]["total"],
-        data["other_objects"]["total"],
+        registry["cars"]["total"],
+        registry["other_objects"]["total"],
     )

@@ -160,6 +160,7 @@ class PostProcessingViewer:
             result_holder: list[tuple | None] = [None]
             try:
                 result_holder[0] = self.controller.confirm_post_processing(eps, min_pts)
+                log.info("Post-processing Done")
             except Exception as e:
                 log.exception("Post-processing failed")
                 err_holder[0] = str(e) or "Post-processing failed."
