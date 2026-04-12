@@ -8,6 +8,7 @@ Pipeline output is classification-only (no DBSCAN clusters); clusters are create
 from __future__ import annotations
 
 import os
+import time
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -24,7 +25,9 @@ from modules.models.ai_object_detector import (
 from modules.models.las_tools import las_io
 from modules.models.las_tools.las_iterator import LasIteratorBasic
 from modules.models.object_cluster_id_manager import ObjectClusterIdManager
+from modules.models.runtime_report import RuntimeReport
 from modules.utils import constants
+from modules.utils.config import SegmentorConfig
 from modules.utils.log_utils import get_dual_logger
 from toolbox.restore_origina_pcd import restore_original_points_in_inliers
 
@@ -32,6 +35,10 @@ if TYPE_CHECKING:
     from modules.utils import config as config_module
 
 log = get_dual_logger(__name__)
+
+
+def _want_runtime_report() -> bool:
+    return bool(getattr(SegmentorConfig.get_instance(), "collect_runtime_report", False))
 
 
 def merge_chunks(input_path: str, chunk_size: int) -> tuple[np.ndarray, dict[str, np.ndarray]]:
@@ -174,6 +181,8 @@ def run_object_vlm_post_processing(
 
     log.info("Running VLM post-processing for %d clusters", len(cluster_ids))
 
+    rpt = RuntimeReport.get_instance() if _want_runtime_report() else None
+
     for cluster_id in cluster_ids.tolist():
         cluster_mask = object_cluster_id == int(cluster_id)
         if not np.any(cluster_mask):
@@ -213,7 +222,10 @@ def run_object_vlm_post_processing(
             )
             screenshot_pcd = view_pcd
 
+        t_img = time.perf_counter()
         front_path, back_path = _take_isometric_screenshot_paths(screenshot_pcd, traces_dir)
+        if rpt is not None:
+            rpt.add_image_creation_seconds(time.perf_counter() - t_img)
         try:
             record = identify_object_from_views(
                 front_path,
@@ -221,6 +233,7 @@ def run_object_vlm_post_processing(
                 cluster_id=int(cluster_id),
                 chunk_index=0,
                 ollama_model=ollama_model,
+                runtime_report=rpt,
             )
             record["bounds"] = _axis_aligned_bounds_from_pcd(screenshot_pcd)
             register_identified_cluster(registry, record)
@@ -281,6 +294,8 @@ def run_post_process_pipeline(
     working = copy_merged_attributes(merged_attrs)
     ensure_object_cluster_id_array(working, len(xyz))
     _, working = run_dbscan_on_merged(xyz, working, eps=eps, min_points=min_points)
+    if _want_runtime_report():
+        RuntimeReport.get_instance().reset()
     run_object_vlm_post_processing(
         merged_attrs=working,
         xyz=xyz,
@@ -296,6 +311,8 @@ def run_post_process_pipeline(
         xyz=xyz,
         merged_attrs=working,
     )
+    if _want_runtime_report():
+        RuntimeReport.get_instance().write_yaml(objects_folder_path)
     return xyz, working
 
 

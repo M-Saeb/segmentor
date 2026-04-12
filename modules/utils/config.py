@@ -61,6 +61,7 @@ class SegmentorConfig:
         "output_folder_path": "./result",
         "overwrite_output_folder": False
     }
+    collect_runtime_report: bool = False
 
     _instance = None
     _config_path: str | None = None

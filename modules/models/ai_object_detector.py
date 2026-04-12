@@ -1,10 +1,12 @@
 import base64
 import os
 import re
+import time
 
 import yaml
 from ollama import chat
 
+from modules.models.runtime_report import RuntimeReport
 from modules.utils import constants
 from modules.utils.log_utils import get_dual_logger
 
@@ -56,6 +58,7 @@ def identify_object_from_views(
     cluster_id: int,
     chunk_index: int,
     ollama_model: str = "gemma3:4b",
+    runtime_report: RuntimeReport | None = None,
 ) -> dict:
     """
     Send front/back isometric PNGs to Ollama and return a record for the YAML registry.
@@ -78,6 +81,7 @@ def identify_object_from_views(
     b64_front = _encode_image_b64(front_path)
     b64_back = _encode_image_b64(back_path)
 
+    t0 = time.perf_counter()
     try:
         response = chat(
             model=ollama_model,
@@ -92,6 +96,9 @@ def identify_object_from_views(
     except Exception as ex:
         log.warning("identify_object_from_views: Ollama chat failed: %s", ex)
         raise
+    finally:
+        if runtime_report is not None:
+            runtime_report.add_vlm_response_seconds(time.perf_counter() - t0)
 
     raw = ""
     if isinstance(response, dict):
