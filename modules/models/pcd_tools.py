@@ -305,22 +305,20 @@ def ransac_floor_segmentation(
         num_iterations,
     )
 
-    def is_floor_check(plane_model, all_floor_planes):
+    def is_floor_check(plane_model, all_floor_planes, z_histogram):
         current_plane_z_intercept = -plane_model[3] / plane_model[2]   # -d1 / c1
         if not is_plane_facing_up(plane_model):
             return False
+        # check if the plane is within the first half of the z_histogram
+        is_within_first_half = current_plane_z_intercept < z_histogram[0][len(z_histogram[0])//2]
+        if not is_within_first_half:
+            return False
+
         for item in all_floor_planes:
             floor_plane_normal = item["plane_model"]
             floor_plane_z_intercept = -floor_plane_normal[3] / floor_plane_normal[2]   # -d1 / c1
             z_difference = abs(current_plane_z_intercept - floor_plane_z_intercept)
             is_above = z_difference > 0.2
-            log.debug(
-                "is_floor_check() => z_difference: %s, is_above: %s, floor plane z_intercept: %s, current plane z_intercept: %s",
-                z_difference,
-                is_above,
-                floor_plane_z_intercept,
-                current_plane_z_intercept,
-            )
             if not is_above:
                 continue
             is_colliding = planes_footprint_overlap_xy(
@@ -336,6 +334,8 @@ def ransac_floor_segmentation(
     classification = points_attributes["classification"]
     n = len(np.asarray(pcd.points))
     orig_indices = np.arange(n, dtype=np.int64)
+    z_values = np.asarray(pcd.points)[:, 2]
+    z_histogram = create_histogram(z_values)
     for i in range(num_iterations):
         if len(remain_pcd.points) <= 3:
             break
@@ -347,7 +347,7 @@ def ransac_floor_segmentation(
         )
 
         inliers_arr = np.asarray(inliers, dtype=np.int64)
-        is_floor = is_floor_check(plane_model, floor_planes)
+        is_floor = is_floor_check(plane_model, floor_planes, z_histogram)
 
         if is_floor:
             classification[orig_indices[inliers_arr]] = constants.PCB_CLASSIFICATION_GROUND

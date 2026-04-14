@@ -41,6 +41,8 @@ objects_segmentation:
   eps: 0.35
   min_points: 15
 
+collect_runtime_report: true
+
 result: # the resulted pointed cloud from the program
   display_result: false
   output_folder_path: "/home/mohammedalsalihi/LidarData/for_mohammed/fh_underground_result"
