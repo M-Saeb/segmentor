@@ -302,6 +302,9 @@ class PipelineController:
         in order, and writes the resulting classified points out via
         `ResultGenerator`. A YAML description of the pipeline is written once
         before processing begins.
+
+        The LAS iterator is rewound to the first chunk first so preview
+        navigation (later chunk indices) does not skip the start of the file.
         """
         if self.process_pipeline is None:
             self.build_process_pipeline_from_setup()
@@ -318,7 +321,11 @@ class PipelineController:
             output_las_path=self.full_las_path,
         )
 
-        for index, pcd, points_attributes in self.las_pipeline_wrapper.iter_input_chunks():
+        lw = self.las_pipeline_wrapper
+        while lw.iterate_chunk(-1):
+            pass
+
+        for index, pcd, points_attributes in lw.iter_input_chunks():
             for stage in self.process_pipeline.stages:
                 stage_kwargs = dict(stage.params)
                 pcd, points_attributes = stage.func(

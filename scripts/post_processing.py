@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Stage-3 post-processing:
-- Read clustered objects from stage-2 output LAS (`object_cluster_id`),
+- Read clustered objects from stage-2 output LAS (`Clusters`),
 - Identify each cluster via VLM from front/back isometric views,
 - Relabel only detected cars,
 - Write `3_post_process.las` and `3_objects.yml` (``cars`` / ``other_objects`` with bounds per cluster).
@@ -189,14 +189,14 @@ def _resolve_io_paths(
 
 
 def _cluster_ids_from_attributes(merged_attrs: dict[str, np.ndarray], n_points: int) -> np.ndarray:
-    if "object_cluster_id" not in merged_attrs:
+    if "Clusters" not in merged_attrs:
         raise KeyError(
-            "Input LAS is missing 'object_cluster_id'. Run pipeline stage with segment_objects_dbscan first."
+            "Input LAS is missing 'Clusters'. Run pipeline stage with segment_objects_dbscan first."
         )
-    object_cluster_id = np.asarray(merged_attrs["object_cluster_id"], dtype=np.int32)
-    if object_cluster_id.shape[0] != n_points:
-        raise ValueError("object_cluster_id length does not match point count.")
-    return np.asarray(sorted(np.unique(object_cluster_id[object_cluster_id > 0])), dtype=np.int32)
+    objects_clusters = np.asarray(merged_attrs["Clusters"], dtype=np.int32)
+    if objects_clusters.shape[0] != n_points:
+        raise ValueError("Clusters length does not match point count.")
+    return np.asarray(sorted(np.unique(objects_clusters[objects_clusters > 0])), dtype=np.int32)
 
 
 def _run_object_vlm_post_processing(
@@ -222,13 +222,13 @@ def _run_object_vlm_post_processing(
     traces_dir = os.path.join(output_folder_path, vlm_traces_subdir)
     os.makedirs(traces_dir, exist_ok=True)
 
-    object_cluster_id = np.asarray(merged_attrs["object_cluster_id"], dtype=np.int32)
+    objects_clusters = np.asarray(merged_attrs["Clusters"], dtype=np.int32)
     pcd_all = o3d.geometry.PointCloud()
     pcd_all.points = o3d.utility.Vector3dVector(xyz)
     n_points = len(xyz)
 
     for cluster_id in cluster_ids.tolist():
-        cluster_mask = object_cluster_id == int(cluster_id)
+        cluster_mask = objects_clusters == int(cluster_id)
         if not np.any(cluster_mask):
             log.warning("Skipping empty cluster %s", cluster_id)
             continue

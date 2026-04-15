@@ -46,7 +46,7 @@ def _map_ai_label_to_classification(ai_label: str) -> int:
     normalized = str(ai_label).strip().lower()
     if normalized in ["car", "truck", "bus", "motorcycle", "bike", "bicycle"]:
         return constants.PCB_CLASSIFICATION_CAR
-    elif normalized in ["empty", "unknown", "structure", "none", "stairs", "vent", "pillar", "ground", "wall", "ceiling"]:
+    elif normalized in ["empty", "unknown", "structure", "none", "stairs", "vent", "road", "pillar", "ground", "wall", "ceiling"]:
         return constants.PCB_CLASSIFICATION_STRUCTURE
     else:
         return constants.PCB_CLASSIFICATION_OTHER_OBJECTS

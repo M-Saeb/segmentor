@@ -3,10 +3,10 @@ from __future__ import annotations
 from threading import Lock
 
 
-class ObjectClusterIdManager:
+class ClustersManager:
     """Singleton allocator for globally unique object-cluster IDs."""
 
-    _instance: "ObjectClusterIdManager | None" = None
+    _instance: "ClustersManager | None" = None
     _instance_lock = Lock()
 
     def __new__(cls):
@@ -18,7 +18,7 @@ class ObjectClusterIdManager:
         return cls._instance
 
     @classmethod
-    def get_instance(cls) -> "ObjectClusterIdManager":
+    def get_instance(cls) -> "ClustersManager":
         return cls()
 
     def reserve_next_ids(self, count: int) -> list[int]:

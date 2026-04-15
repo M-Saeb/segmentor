@@ -8,25 +8,22 @@ log = get_dual_logger(__name__)
 
 
 def _merge_chunks(file_path: str, chunk_size: int) -> tuple[o3d.geometry.PointCloud, dict[str, np.ndarray]]:
-    xyz_parts: list[np.ndarray] = []
     attr_parts: dict[str, list[np.ndarray]] = {}
+    merged_pcd = o3d.geometry.PointCloud()
 
     for index, (pcd, points_attributes) in enumerate(las_io.read_chunk_las_file(file_path, chunk_size)):
         log.info("Merging chunk %d", index + 1)
-        xyz_parts.append(np.asarray(pcd.points, dtype=np.float64))
+        merged_pcd += pcd
         for dim, arr in points_attributes.items():
             attr_parts.setdefault(dim, []).append(np.asarray(arr))
 
-    if not xyz_parts:
+    if not merged_pcd.points:
         raise RuntimeError("No points were read from the input.")
 
-    log.info("Merged %d chunks", len(xyz_parts))
-    xyz = np.vstack(xyz_parts)
+    log.info("Merged chunks")
     merged_attrs: dict[str, np.ndarray] = {
         dim: np.concatenate(chunks, axis=0) for dim, chunks in attr_parts.items()
     }
-    merged_pcd = o3d.geometry.PointCloud()
-    merged_pcd.points = o3d.utility.Vector3dVector(xyz)
     return merged_pcd, merged_attrs
 
 

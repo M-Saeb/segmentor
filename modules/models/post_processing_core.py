@@ -24,7 +24,7 @@ from modules.models.ai_object_detector import (
 )
 from modules.models.las_tools import las_io
 from modules.models.las_tools.las_iterator import LasIteratorBasic
-from modules.models.object_cluster_id_manager import ObjectClusterIdManager
+from modules.models.clusters_manager import ClustersManager
 from modules.models.runtime_report import RuntimeReport
 from modules.utils import constants
 from modules.utils.config import SegmentorConfig
@@ -127,12 +127,12 @@ def resolve_io_paths(
 
 
 def cluster_ids_from_attributes(merged_attrs: dict[str, np.ndarray], n_points: int) -> np.ndarray:
-    if "object_cluster_id" not in merged_attrs:
+    if "Clusters" not in merged_attrs:
         return np.array([], dtype=np.int32)
-    object_cluster_id = np.asarray(merged_attrs["object_cluster_id"], dtype=np.int32)
-    if object_cluster_id.shape[0] != n_points:
-        raise ValueError("object_cluster_id length does not match point count.")
-    return np.asarray(sorted(np.unique(object_cluster_id[object_cluster_id > 0])), dtype=np.int32)
+    objects_clusters = np.asarray(merged_attrs["Clusters"], dtype=np.int32)
+    if objects_clusters.shape[0] != n_points:
+        raise ValueError("Clusters length does not match point count.")
+    return np.asarray(sorted(np.unique(objects_clusters[objects_clusters > 0])), dtype=np.int32)
 
 
 def _axis_aligned_bounds_from_pcd(pcd: o3d.geometry.PointCloud) -> dict[str, list[float]]:
@@ -174,7 +174,7 @@ def run_object_vlm_post_processing(
     traces_dir = os.path.join(output_folder_path, vlm_traces_subdir)
     os.makedirs(traces_dir, exist_ok=True)
 
-    object_cluster_id = np.asarray(merged_attrs["object_cluster_id"], dtype=np.int32)
+    objects_clusters = np.asarray(merged_attrs["Clusters"], dtype=np.int32)
     pcd_all = o3d.geometry.PointCloud()
     pcd_all.points = o3d.utility.Vector3dVector(xyz)
     n_points = len(xyz)
@@ -184,7 +184,7 @@ def run_object_vlm_post_processing(
     rpt = RuntimeReport.get_instance() if _want_runtime_report() else None
 
     for cluster_id in cluster_ids.tolist():
-        cluster_mask = object_cluster_id == int(cluster_id)
+        cluster_mask = objects_clusters == int(cluster_id)
         if not np.any(cluster_mask):
             log.warning("Skipping empty cluster %s", cluster_id)
             continue
@@ -249,14 +249,14 @@ def run_object_vlm_post_processing(
     merged_attrs["classification"] = classification
 
 
-def ensure_object_cluster_id_array(merged_attrs: dict[str, np.ndarray], n_points: int) -> None:
-    if "object_cluster_id" not in merged_attrs:
-        merged_attrs["object_cluster_id"] = np.zeros(n_points, dtype=np.int32)
+def ensure_object_clusters_array(merged_attrs: dict[str, np.ndarray], n_points: int) -> None:
+    if "Clusters" not in merged_attrs:
+        merged_attrs["Clusters"] = np.zeros(n_points, dtype=np.int32)
         return
-    oc = np.asarray(merged_attrs["object_cluster_id"], dtype=np.int32)
-    if oc.shape[0] != n_points:
-        raise ValueError("object_cluster_id length does not match point count.")
-    merged_attrs["object_cluster_id"] = oc
+    objects_clusters = np.asarray(merged_attrs["Clusters"], dtype=np.int32)
+    if objects_clusters.shape[0] != n_points:
+        raise ValueError("Clusters length does not match point count.")
+    merged_attrs["Clusters"] = objects_clusters
 
 
 def run_dbscan_on_merged(
@@ -266,10 +266,10 @@ def run_dbscan_on_merged(
     min_points: int,
 ) -> tuple[o3d.geometry.PointCloud, dict[str, np.ndarray]]:
     """Run `segment_objects_dbscan` on a full merged cloud (mutates attrs copy)."""
-    ensure_object_cluster_id_array(merged_attrs, len(xyz))
+    ensure_object_clusters_array(merged_attrs, len(xyz))
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(xyz)
-    ObjectClusterIdManager.get_instance().reset(start=1)
+    ClustersManager.get_instance().reset(start=1)
     return pcd_tools.segment_objects_dbscan(pcd, merged_attrs, eps=eps, min_points=min_points)
 
 
@@ -292,7 +292,7 @@ def run_post_process_pipeline(
     """
     xyz, merged_attrs = merge_chunks(input_path=input_path, chunk_size=chunk_size)
     working = copy_merged_attributes(merged_attrs)
-    ensure_object_cluster_id_array(working, len(xyz))
+    ensure_object_clusters_array(working, len(xyz))
     _, working = run_dbscan_on_merged(xyz, working, eps=eps, min_points=min_points)
     if _want_runtime_report():
         RuntimeReport.get_instance().reset()
@@ -367,14 +367,14 @@ def build_dbscan_preview_pcd(
     rng: np.random.Generator | None = None,
 ) -> o3d.geometry.PointCloud:
     """
-    Colors: random per object_cluster_id > 0, green ground, gray INIT noise, yellow-ish for OBJECTS without id omitted — unclustered INIT stays gray.
+    Colors: random per Clusters > 0, green ground, gray INIT noise, yellow-ish for OBJECTS without id omitted — unclustered INIT stays gray.
     """
     if rng is None:
         rng = np.random.default_rng()
 
     classification = np.asarray(points_attributes["classification"], dtype=np.int64)
     objects_clusters = np.asarray(
-        points_attributes.get("object_cluster_id", np.zeros(len(xyz), dtype=np.int32)),
+        points_attributes.get("Clusters", np.zeros(len(xyz), dtype=np.int32)),
         dtype=np.int32,
     )
     idx = point_indices_post_dbscan_preview(classification)

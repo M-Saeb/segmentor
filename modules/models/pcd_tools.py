@@ -2,7 +2,7 @@ import os
 import numpy as np
 import open3d as o3d
 from scipy.spatial import ConvexHull
-from modules.models.object_cluster_id_manager import ObjectClusterIdManager
+from modules.models.clusters_manager import ClustersManager
 from modules.utils.log_utils import get_dual_logger
 from modules.utils import constants
 
@@ -750,10 +750,10 @@ def segment_objects_dbscan(pcd, points_attributes, eps, min_points):
     Neighbors are computed only within the unclassified subset so clusters cannot
     bridge through ground, walls, or ceiling.
 
-    Sets object_cluster_id (1..K per cluster) when clusters exist; segment_objects may strip it
+    Sets Clusters (1..K per cluster) when clusters exist; segment_objects may strip it
     for setup preview. Cleared at start if present from a previous run.
     """
-    points_attributes.pop("object_cluster_id", None)
+    points_attributes.pop("Clusters", None)
     classification = points_attributes.get("classification", None)
     if classification is None:
         log.warning(
@@ -804,9 +804,9 @@ def segment_objects_dbscan(pcd, points_attributes, eps, min_points):
 
     # Global cluster ids are reserved from a process-level singleton allocator so
     # cluster IDs remain unique across chunk-by-chunk DBSCAN calls.
-    object_cluster_id = np.zeros(num_points, dtype=np.int32)
+    object_clusters = np.zeros(num_points, dtype=np.int32)
     unique_labels = sorted(np.unique(labels[labels >= 0]))
-    cluster_id_manager = ObjectClusterIdManager.get_instance()
+    cluster_id_manager = ClustersManager.get_instance()
     reserved_ids = cluster_id_manager.reserve_next_ids(len(unique_labels))
     raw_to_global_id = {
         int(raw): int(global_id)
@@ -816,10 +816,10 @@ def segment_objects_dbscan(pcd, points_attributes, eps, min_points):
         lab = int(lab)
         if lab >= 0:
             global_idx = int(init_indices[local_idx])
-            object_cluster_id[global_idx] = raw_to_global_id[lab]
+            object_clusters[global_idx] = raw_to_global_id[lab]
 
     points_attributes["classification"] = classification
-    points_attributes["object_cluster_id"] = object_cluster_id
+    points_attributes["Clusters"] = object_clusters
     return pcd, points_attributes
 
 
@@ -904,15 +904,15 @@ def _apply_rgb_colors_to_pcd(pcd, points_attributes):
     pcd.colors = o3d.utility.Vector3dVector(rgb)
 
 
-def mask_indices_for_object_vlm_view(classification, object_cluster_id, cluster_id):
+def mask_indices_for_object_vlm_view(classification, objects_clusters, cluster_id):
     """
     Ground + target cluster + unclassified (INIT) points only (excludes other clusters, walls, ceiling).
     """
     classification = np.asarray(classification)
-    object_cluster_id = np.asarray(object_cluster_id, dtype=np.int32)
+    objects_clusters = np.asarray(objects_clusters, dtype=np.int32)
     ground = classification == constants.PCB_CLASSIFICATION_GROUND
     # init_pts = classification == constants.PCB_CLASSIFICATION_INIT
-    this_object = object_cluster_id == cluster_id
+    this_object = objects_clusters == cluster_id
     # combined = ground | init_pts | this_object
     combined = ground | this_object
     return np.where(combined)[0]
