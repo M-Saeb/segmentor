@@ -89,6 +89,7 @@ def write_las_merged(
 
     original_header = las_io.get_original_las_header(input_path)
     base_header = las_io.create_new_las_header(original_header)
+    las_io.ensure_object_clusters_in_header(base_header)
     las_io.init_las_file(output_path, base_header)
 
     for start in range(0, n, chunk_size):
