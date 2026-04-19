@@ -1,0 +1,12 @@
+{
+  "target_points_per_tile": 500,
+  "num_seeds": 1,
+  "chunks": [
+    {
+      "start": 0,
+      "end": 365,
+      "bin_id": 0,
+      "point_count": 365
+    }
+  ]
+}
