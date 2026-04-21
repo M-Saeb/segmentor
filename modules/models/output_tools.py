@@ -55,6 +55,13 @@ def get_pipeline_output_las_path(result_folder_path: Union[str, None]= None) -> 
         result_folder_path = init_result_folder_path(use_existing_folder=True)
     return os.path.join(result_folder_path, "2_pipeline.las")
 
+
+def get_cityjson_citygml_path(result_folder_path: Union[str, None] = None) -> str:
+    """Path to pipeline CityJSON export (filename ``citygml.city.json``; content is CityJSON)."""
+    if result_folder_path is None:
+        result_folder_path = init_result_folder_path(use_existing_folder=True)
+    return os.path.join(result_folder_path, "citygml.city.json")
+
 def get_post_process_output_las_path(result_folder_path: Union[str, None] = None) -> str:
     if result_folder_path is None:
         result_folder_path = init_result_folder_path(use_existing_folder=True)

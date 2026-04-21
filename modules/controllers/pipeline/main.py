@@ -5,6 +5,7 @@ from modules.utils.pipeline import PipelineStage, Pipeline
 from modules.models import LasPipelineWrapper
 from modules.models import LasIteratorKDTree
 from modules.models import output_tools
+from modules.models.cityjson_export import write_pipeline_cityjson
 from modules.models import pcd_tools
 from modules.utils.log_utils import get_dual_logger
 from modules.utils import constants
@@ -341,6 +342,20 @@ class PipelineController:
                 full_path=self.full_las_path
             )
         log.info("===== Finished writing to: %s ======", self.full_las_path)
+
+        export_cfg = getattr(self.config, "cityjson_export", None) or {}
+        if export_cfg.get("enable", True):
+            try:
+
+                write_pipeline_cityjson(
+                    result_folder_path=self.output_folder_path,
+                    pipeline_las_path=self.full_las_path,
+                    cfg=self.config,
+                )
+            except Exception:
+                log.exception(
+                    "CityJSON export failed; pipeline LAS output is still valid."
+                )
 
     def _pipeline_functions_wrapper(self, callback, **kwargs):
         pcd, points_attributes = callback(

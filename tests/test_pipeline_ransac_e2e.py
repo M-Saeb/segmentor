@@ -10,6 +10,7 @@ refresh the golden files after a single local run.
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -109,6 +110,12 @@ def _run_pipeline_case(tmp_path: Path, extra_config: dict, expected_las: Path) -
     assert actual_path.exists()
     assert actual_path.name == "2_pipeline.las"
     _assert_las_numeric_core(actual_path, expected_las)
+
+    city_path = output_dir / "citygml.city.json"
+    assert city_path.exists()
+    city_payload = json.loads(city_path.read_text(encoding="utf-8"))
+    assert city_payload.get("type") == "CityJSON"
+    assert city_payload.get("version") == "2.0"
 
 
 def test_pipeline_ground_ransac(tmp_path: Path):

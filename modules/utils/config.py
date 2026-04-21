@@ -62,6 +62,9 @@ class SegmentorConfig:
         "overwrite_output_folder": False
     }
     collect_runtime_report: bool = False
+    cityjson_export: dict = {
+        "enable": True,
+    }
 
     _instance = None
     _config_path: str | None = None

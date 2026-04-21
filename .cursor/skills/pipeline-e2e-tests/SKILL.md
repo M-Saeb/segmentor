@@ -29,6 +29,14 @@ Use this workspace’s Segmentor conda interpreter when running commands (see `.
 
 The tests exercise **`PipelineController.build_process_pipeline_from_setup()`** and **`run_process_pipeline_on_all_chunks()`** (see [`modules/controllers/pipeline/main.py`](modules/controllers/pipeline/main.py)). Frozen YAML parameters live as constants in the test module (`GROUND_RANSAC_PARAMS`, `CEILING_PARAMS`, `WALL_PARAMS`) and must stay aligned with how the golden LAS files were generated.
 
+After a successful full-chunk run, the controller also writes **CityJSON** to [`{result}/citygml.city.json`](modules/models/output_tools.py) (see [`modules/models/cityjson_export.py`](modules/models/cityjson_export.py)) when `cityjson_export.enable` is true (default in [`SegmentorConfig`](modules/utils/config.py)). The tests assert the file exists and has `type: CityJSON` / `version: "2.0"`. Contract-only tests live in [`tests/test_cityjson_pipeline_export.py`](tests/test_cityjson_pipeline_export.py).
+
+**Full `tests/` suite (all E2E modules):**
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/ -v
+```
+
 ## When tests fail: produce a failure report
 
 Do **not** stop at “tests failed.” After collecting pytest output, deliver a short **structured report** that explains *why* the failure likely occurred.
@@ -38,6 +46,7 @@ Do **not** stop at “tests failed.” After collecting pytest output, deliver a
 - Which test names failed (`test_pipeline_ground_ransac`, `test_pipeline_ceiling_ransac`, `test_pipeline_wall_ransac`).
 - Exact assertion traceback: file, line, and assertion message.
 - Any warnings (e.g. `RuntimeWarning` from RANSAC / plane fitting in `pcd_tools`).
+- Missing or invalid **`citygml.city.json`** after pipeline — check [`write_pipeline_cityjson`](modules/models/cityjson_export.py), `merge_chunks` on `2_pipeline.las`, or disable export via `cityjson_export.enable: false` for isolated LAS-only debugging.
 
 ### 2. Classify the failure using `_assert_las_numeric_core` behavior
 
