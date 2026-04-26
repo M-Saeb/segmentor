@@ -7,8 +7,8 @@ from modules.controllers.pre_process.utils import _voxel_downsample_preserve_att
 from modules.utils.config import SegmentorConfig
 from modules.utils import constants
 from toolbox.restore_origina_pcd import restore_original_points_in_inliers
-from toolbox.custom_mesh import reconstruct_mesh as reconstruct_mesh_custom
-from modules.models.cityjson_export_4 import write_cityjson_mesh_part
+from modules.models.mesh.ball_neighbourhood_mesh import reconstruct_mesh as reconstruct_mesh_custom
+from modules.models.cityjson_export import write_cityjson_mesh_part
 
 
 def create_mesh_1(pcd: o3d.geometry.PointCloud, alpha: float = 4) -> o3d.geometry.TriangleMesh:
@@ -148,34 +148,34 @@ ceiling_pcd = building_pcd.select_by_index(ceiling_indices)
 ceiling_meshes = create_ceiling_mesh(ceiling_pcd)
 print("finished ceiling meshes")
 
-output_json_path = "/home/mohammedalsalihi/LidarData/for_mohammed/fh_underground_result/citygml.city.json"
-if os.path.isfile(output_json_path):
-    os.remove(output_json_path)
+# output_json_path = "/home/mohammedalsalihi/LidarData/for_mohammed/fh_underground_result/citygml.city.json"
+# if os.path.isfile(output_json_path):
+#     os.remove(output_json_path)
 
 
 
-write_cityjson_mesh_part(
-    mesh_id="groundSurface",
-    mesh=ground_mesh,
-    result_folder_path="/home/mohammedalsalihi/Workspace/segmentor/results/fh_underground_result",
-    output_json_path=output_json_path,
-)
+# write_cityjson_mesh_part(
+#     mesh_id="groundSurface",
+#     mesh=ground_mesh,
+#     result_folder_path="/home/mohammedalsalihi/Workspace/segmentor/results/fh_underground_result",
+#     output_json_path=output_json_path,
+# )
 
 
-for wall_mesh in wall_meshes:
-    write_cityjson_mesh_part(
-        mesh_id="wallSurface",
-        mesh=wall_mesh,
-        result_folder_path="/home/mohammedalsalihi/Workspace/segmentor/results/fh_underground_result",
-        output_json_path=output_json_path,
-        append_to_existing=True,
-    )
-write_cityjson_mesh_part(
-    mesh_id="ceilingSurface",
-    mesh=ceiling_meshes,
-    result_folder_path="/home/mohammedalsalihi/Workspace/segmentor/results/fh_underground_result",
-    output_json_path=output_json_path,
-)
+# for wall_mesh in wall_meshes:
+#     write_cityjson_mesh_part(
+#         mesh_id="wallSurface",
+#         mesh=wall_mesh,
+#         result_folder_path="/home/mohammedalsalihi/Workspace/segmentor/results/fh_underground_result",
+#         output_json_path=output_json_path,
+#         append_to_existing=True,
+#     )
+# write_cityjson_mesh_part(
+#     mesh_id="ceilingSurface",
+#     mesh=ceiling_meshes,
+#     result_folder_path="/home/mohammedalsalihi/Workspace/segmentor/results/fh_underground_result",
+#     output_json_path=output_json_path,
+# )
 
-# o3d.visualization.draw_geometries([ground_mesh, *wall_meshes, ceiling_meshes], mesh_show_back_face=True)
+o3d.visualization.draw_geometries([ground_mesh, *wall_meshes, ceiling_meshes], mesh_show_back_face=True)
 # o3d.visualization.draw_geometries([ground_mesh], mesh_show_back_face=True)

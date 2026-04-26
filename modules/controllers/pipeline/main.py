@@ -1,11 +1,22 @@
+from __future__ import annotations
+
+import os
 from typing import Dict
+
+import numpy as np
+import open3d as o3d
 
 from modules.utils.config import SegmentorConfig
 from modules.utils.pipeline import PipelineStage, Pipeline
 from modules.models import LasPipelineWrapper
 from modules.models import LasIteratorKDTree
 from modules.models import output_tools
-from modules.models.cityjson_export import write_pipeline_cityjson
+from modules.models.cityjson_export import write_cityjson_mesh_part
+from modules.models.las_tools import las_io
+from modules.models.mesh.ball_neighbourhood_mesh import (
+    estimate_ball_radius,
+    reconstruct_mesh,
+)
 from modules.models import pcd_tools
 from modules.utils.log_utils import get_dual_logger
 from modules.utils import constants
@@ -347,11 +358,7 @@ class PipelineController:
         if export_cfg.get("enable", True):
             try:
 
-                write_pipeline_cityjson(
-                    result_folder_path=self.output_folder_path,
-                    pipeline_las_path=self.full_las_path,
-                    cfg=self.config,
-                )
+                self.create_cityjson_file()
             except Exception:
                 log.exception(
                     "CityJSON export failed; pipeline LAS output is still valid."
@@ -375,3 +382,79 @@ class PipelineController:
         elif color == "Classification":
             previewer.apply_classfication_colors()
         return previewer.pcd
+
+    def create_cityjson_file(self):
+        """
+        Build triangle meshes from classified pipeline LAS points (ground / wall /
+        ceiling) using ball-neighbourhood reconstruction, then write CityJSON v2
+        to ``citygml.city.json`` under the result folder.
+        """
+        export_cfg = getattr(self.config, "cityjson_export", None) or {}
+        out_path = output_tools.get_cityjson_citygml_path(self.output_folder_path)
+        if os.path.isfile(out_path):
+            os.remove(out_path)
+
+        pcd, attrs = las_io.read_full_las_file(self.full_las_path)
+        attrs = {k: np.copy(np.asarray(v)) for k, v in attrs.items()}
+        if "classification" not in attrs:
+            log.warning("CityJSON export skipped: LAS has no 'classification' dimension")
+            return
+
+        classification = np.asarray(attrs["classification"])
+        n = len(pcd.points)
+
+        max_faces = int(export_cfg.get("max_faces", 1_000_000))
+        ball_radius = float(export_cfg.get("ball_radius", 5))
+
+        def _ball_radius_for(suffix: str, sub: o3d.geometry.PointCloud) -> float:
+            key = f"ball_radius_{suffix}"
+            if key in export_cfg and export_cfg[key] is not None:
+                return float(export_cfg[key])
+            if export_cfg.get("ball_radius") is not None:
+                return float(export_cfg["ball_radius"])
+            return estimate_ball_radius(sub)
+
+        surfaces: list[tuple[str, int, str]] = [
+            ("groundSurface", constants.PCB_CLASSIFICATION_GROUND, "ground"),
+            ("wallSurface", constants.PCB_CLASSIFICATION_WALL, "wall"),
+            ("ceilingSurface", constants.PCB_CLASSIFICATION_CEILING, "ceiling"),
+        ]
+
+        log.info(f"Creating CityJSON file with ball radius: {ball_radius}")
+        for mesh_id, class_id, radius_suffix in surfaces:
+            mask = classification == class_id
+            if mask.shape[0] != n:
+                log.warning(
+                    "CityJSON export: classification length %s != point count %s for %s",
+                    mask.shape[0],
+                    n,
+                    mesh_id,
+                )
+                continue
+            idx = np.where(mask)[0].tolist()
+            if len(idx) < 4:
+                continue
+
+            sub_pcd = pcd.select_by_index(idx)
+            try:
+                mesh = reconstruct_mesh(
+                    sub_pcd,
+                    ball_radius=ball_radius,
+                    max_faces=max_faces,
+                )
+            except (ValueError, RuntimeError) as exc:
+                log.warning(
+                    "CityJSON export skipped for %s: %s",
+                    mesh_id,
+                    exc,
+                )
+                continue
+
+            write_cityjson_mesh_part(
+                mesh_id=mesh_id,
+                mesh=mesh,
+                result_folder_path=self.output_folder_path,
+                output_json_path=out_path,
+                append_to_existing=False,
+            )
+        log.info(f"Finished creating CityJSON file")

@@ -544,10 +544,16 @@ def apply_ransac_ceiling_detection(
         min_inlier_density,
     )
 
-    def is_ceiling_check(plane_model, inlier_points_xyz):
+    def is_ceiling_check(plane_model, inlier_points_xyz, z_histogram):
+        current_plane_z_intercept = -plane_model[3] / plane_model[2]   # -d1 / c1
         point_array = np.asarray(inlier_points_xyz)
         if point_array.size == 0:
             return False
+        # check if the plane is within the higher half of the z_histogram
+        is_within_higher_half = current_plane_z_intercept > z_histogram[0][len(z_histogram[0])//2]
+        if not is_within_higher_half:
+            return False
+
         inlier_indices = np.arange(len(point_array))
         density = get_inlier_density(
             point_array, inlier_indices, plane_model
@@ -564,6 +570,8 @@ def apply_ransac_ceiling_detection(
     remain_pcd = pcd
     orig_indices = np.arange(len(points), dtype=np.int64)
     n = len(points)
+    z_values = np.asarray(pcd.points)[:, 2]
+    z_histogram = create_histogram(z_values)
 
     log.info("Starting RANSAC ceiling detection on %d points...", n)
 
@@ -580,7 +588,7 @@ def apply_ransac_ceiling_detection(
             break
 
         inlier_points = np.asarray(remain_pcd.points)[inliers_arr]
-        is_ceiling = is_ceiling_check(plane_model, inlier_points)
+        is_ceiling = is_ceiling_check(plane_model, inlier_points, z_histogram)
 
         if is_ceiling:
             ceiling_planes_found += 1

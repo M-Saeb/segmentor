@@ -45,6 +45,11 @@ collect_runtime_report: true
 
 cityjson_export:
   enable: true
+  # Ball-neighbourhood mesh for CityJSON export (see modules/models/mesh/ball_neighbourhood_mesh.py).
+  # Optional: ball_radius (meters) or ball_radius_ground / ball_radius_wall / ball_radius_ceiling.
+  # If omitted, ball radius is estimated per surface via estimate_ball_radius.
+  # max_faces: 1000000
+  # min_neighbours: 4
 
 result: # the resulted pointed cloud from the program
   display_result: false

@@ -64,6 +64,8 @@ class SegmentorConfig:
     collect_runtime_report: bool = False
     cityjson_export: dict = {
         "enable": True,
+        "max_faces": 1_000_000,
+        "ball_radius": 5,
     }
 
     _instance = None
