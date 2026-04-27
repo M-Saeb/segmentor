@@ -15,7 +15,7 @@ import numpy as np
 import open3d as o3d
 from modules.models import output_tools
 from modules.models import pcd_tools
-from modules.models.ai_object_detector import (
+from modules.models.vlm_tools import (
     empty_objects_registry,
     identify_object_from_views,
     register_identified_cluster,
@@ -24,7 +24,7 @@ from modules.models.ai_object_detector import (
 from modules.models.las_tools import las_io
 from modules.models.las_tools.las_iterator import LasIteratorBasic
 from modules.models.clusters_manager import ClustersManager
-from modules.models.rich_media import take_rich_media_screenshots
+from modules.models.rich_media_tools import take_rich_media_screenshots
 from modules.models.runtime_report import RuntimeReport
 from modules.utils import constants
 from modules.utils.config import SegmentorConfig
@@ -36,11 +36,18 @@ if TYPE_CHECKING:
 
 log = get_dual_logger(__name__)
 
-VLM_RICH_MEDIA_VIEW_COUNT = 6
-
 
 def _want_runtime_report() -> bool:
     return bool(getattr(SegmentorConfig.get_instance(), "collect_runtime_report", False))
+
+
+def _get_vlm_views_count() -> int:
+    cfg = SegmentorConfig.get_instance()
+    vlm_cfg = getattr(cfg, "vlm", {}) or {}
+    views_count = int(vlm_cfg.get("views_count", 6))
+    if views_count <= 0:
+        raise ValueError("vlm.views_count must be greater than 0.")
+    return views_count
 
 
 def merge_chunks(input_path: str, chunk_size: int) -> tuple[np.ndarray, dict[str, np.ndarray]]:
@@ -196,7 +203,7 @@ def run_object_vlm_post_processing(
                 view_attrs[dim] = arr
 
         try:
-            pcd_tools._apply_rgb_colors_to_pcd(view_pcd, view_attrs)
+            pcd_tools.apply_rgb_colors_to_pcd(view_pcd, view_attrs)
         except ValueError as ex:
             log.warning("Cluster %s has invalid RGB (%s); skipping VLM.", cluster_id, ex)
             continue
@@ -219,7 +226,11 @@ def run_object_vlm_post_processing(
             screenshot_pcd = view_pcd
 
         t_img = time.perf_counter()
-        view_paths = take_rich_media_screenshots(screenshot_pcd, traces_dir, number_of_views=VLM_RICH_MEDIA_VIEW_COUNT)
+        view_paths = take_rich_media_screenshots(
+            screenshot_pcd,
+            traces_dir,
+            number_of_views=_get_vlm_views_count(),
+        )
 
         if rpt is not None:
             rpt.add_image_creation_seconds(time.perf_counter() - t_img)
@@ -233,8 +244,7 @@ def run_object_vlm_post_processing(
             )
             record["bounds"] = _axis_aligned_bounds_from_pcd(screenshot_pcd)
             register_identified_cluster(registry, record)
-            if int(record["classification"]) == constants.PCB_CLASSIFICATION_CAR:
-                classification[cluster_mask] = constants.PCB_CLASSIFICATION_CAR
+            classification[cluster_mask] = record["classification"]
             log.info("Cluster %s identified as [[[ %s ]]]: %s.", cluster_id, record.get("ai_label"), record.get("description"))
         except Exception as ex:
             log.warning("VLM call failed for cluster %s: %s", cluster_id, ex, exc_info=True)

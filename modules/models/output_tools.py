@@ -2,7 +2,7 @@ from typing import Union
 import os
 import yaml
 from modules.utils import config
-from modules.models.ai_object_detector import identified_objects_yaml_path
+from modules.models.vlm_tools import identified_objects_yaml_path
 from modules.utils.log_utils import get_dual_logger
 from .las_tools.las_pipeline_wrapper import LasPipelineWrapper
 

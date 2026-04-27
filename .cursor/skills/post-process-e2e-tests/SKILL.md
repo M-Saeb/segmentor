@@ -32,7 +32,7 @@ Use this workspace’s Segmentor conda interpreter when running commands (see `.
 
 Frozen constants in the test module (`EPS_NO_CLUSTER`, `MIN_POINTS_NO_CLUSTER`, `EPS_CLUSTER`, `MIN_POINTS_CLUSTER`) must stay aligned with how the golden LAS files were generated.
 
-The **`identify_object_from_views`** integration test uses **`unittest.mock.patch`** plus a stub for **`_take_isometric_screenshot_paths`** so Open3D **OffscreenRenderer** is never used (headless-safe). Tests assert **structural validity** of the mocked VLM dict (`classification`, `ai_label`, non-empty `raw_response`), **not** semantic label content.
+The **`identify_object_from_views`** integration test uses **`unittest.mock.patch`** plus a stub for **`_take_rich_media_screenshot_paths`** so Open3D **OffscreenRenderer** is never used (headless-safe). Tests assert **structural validity** of the mocked VLM dict (`classification`, `ai_label`, non-empty `raw_response`), **not** semantic label content.
 
 ## When tests fail: produce a failure report
 
@@ -50,7 +50,7 @@ Do **not** stop at “tests failed.” After collecting pytest output, deliver a
 
 **Empty-registry test:** YAML totals zero for cars and other_objects.
 
-**Mocked-VLM test:** Patches must remain applied in import path **`modules.models.post_processing_core`**. If **`eglInitialize` / segfault** appears, the screenshot stub was bypassed—restore **`_take_isometric_screenshot_paths`** patch.
+**Mocked-VLM test:** Patches must remain applied in import path **`modules.models.post_processing_tools`**. If **`eglInitialize` / segfault** appears, the screenshot stub was bypassed—restore **`_take_rich_media_screenshot_paths`** patch.
 
 | Symptom | Likely cause |
 |---------|----------------|

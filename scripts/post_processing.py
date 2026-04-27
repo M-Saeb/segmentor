@@ -21,10 +21,10 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from modules.models import output_tools  # noqa: E402
-from modules.models.rich_media import take_rich_media_screenshots  # noqa: E402
+from modules.models.rich_media_tools import take_rich_media_screenshots  # noqa: E402
 from modules.models.las_tools import las_io  # noqa: E402
 from modules.models.las_tools.las_iterator import LasIteratorBasic  # noqa: E402
-from modules.models.ai_object_detector import (  # noqa: E402
+from modules.models.vlm_tools import (  # noqa: E402
     empty_objects_registry,
     identify_object_from_views,
     identified_objects_yaml_path,
@@ -36,9 +36,15 @@ from modules.utils import config as config_module  # noqa: E402
 from modules.utils import constants  # noqa: E402
 from modules.utils import log_utils  # noqa: E402
 
-VLM_RICH_MEDIA_VIEW_COUNT = 6
-
 log = log_utils.get_dual_logger(__name__)
+
+
+def _get_vlm_views_count(cfg: config_module.SegmentorConfig) -> int:
+    vlm_cfg = getattr(cfg, "vlm", {}) or {}
+    views_count = int(vlm_cfg.get("views_count", 6))
+    if views_count <= 0:
+        raise ValueError("vlm.views_count must be greater than 0.")
+    return views_count
 
 
 def _apply_rgb_colors_to_pcd(
@@ -231,7 +237,13 @@ def _run_object_vlm_post_processing(
             )
             screenshot_pcd = view_pcd
 
-        view_paths = take_rich_media_screenshots(screenshot_pcd, traces_dir, number_of_views=VLM_RICH_MEDIA_VIEW_COUNT)
+        vlm_views_count = _get_vlm_views_count(cfg)
+
+        view_paths = take_rich_media_screenshots(
+            screenshot_pcd,
+            traces_dir,
+            number_of_views=vlm_views_count,
+        )
         try:
             record = identify_object_from_views(
                 view_paths,

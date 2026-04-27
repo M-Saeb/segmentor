@@ -7,7 +7,7 @@ from modules.controllers.pre_process.utils import _voxel_downsample_preserve_att
 from modules.utils.config import SegmentorConfig
 from modules.utils import constants
 from toolbox.restore_origina_pcd import restore_original_points_in_inliers
-from modules.models.mesh.ball_neighbourhood_mesh import reconstruct_mesh as reconstruct_mesh_custom
+from modules.models.mesh_tools.ball_neighbourhood_mesh import create_ball_neighbourhood_mesh
 from modules.models.cityjson_export import write_cityjson_mesh_part
 
 
@@ -33,7 +33,7 @@ def create_mesh_poisson(pcd: o3d.geometry.PointCloud) -> o3d.geometry.TriangleMe
     return mesh
 
 def create_ground_mesh(pcd: o3d.geometry.PointCloud) -> o3d.geometry.TriangleMesh:
-    shape_mesh = reconstruct_mesh_custom(pcd, ball_radius=5, max_faces=1_000_000)
+    shape_mesh = create_ball_neighbourhood_mesh(pcd, ball_radius=5, max_faces=1_000_000)
     return shape_mesh
     # concave_hull = concave_hull_polygon_1(pcd.points)
     # shape_mesh = triangle_mesh_from_concave_hull_polygon(concave_hull)
@@ -85,14 +85,14 @@ def create_wall_meshes(pcd: o3d.geometry.PointCloud) -> list[o3d.geometry.Triang
         # concave_hull = concave_hull_polygon_1(wall_pcd.points, plane="pca")
         # display_concave_hull_polygon(concave_hull, points=wall_pcd)
         # shape_mesh = triangle_mesh_from_concave_hull_polygon(concave_hull, plane="pca")
-        shape_mesh = reconstruct_mesh_custom(wall_pcd, ball_radius=1, max_faces=1_000_000)
+        shape_mesh = create_ball_neighbourhood_mesh(wall_pcd, ball_radius=1, max_faces=1_000_000)
         shape_mesh.paint_uniform_color([0.0, 0.0, 1.0]) # blue color
         shapes_meshes.append(shape_mesh)
     return shapes_meshes
 
 
 def create_ceiling_mesh(pcd: o3d.geometry.PointCloud) -> o3d.geometry.TriangleMesh:
-    mesh = reconstruct_mesh_custom(pcd, ball_radius=2, max_faces=1_000_000)
+    mesh = create_ball_neighbourhood_mesh(pcd, ball_radius=2, max_faces=1_000_000)
     mesh.paint_uniform_color([1.0, 0.0, 0.0])  # Add a red color to the mesh
     mesh.compute_vertex_normals()
     return mesh

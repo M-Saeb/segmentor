@@ -126,52 +126,7 @@ def filter_noise(pcd, points_attributes, nb_neighbors=20, std_ratio=2.0):
 
     return new_pcd, new_points_attributes
 
-
-def find_peak_and_drops(x, y, drop_threshold=0.10):
-    peak_idx = np.argmax(y)
-
-    # Find left drop
-    left_idx = 0
-    for i in range(0, peak_idx):
-        if y[i] < y[peak_idx] * drop_threshold:
-            left_idx = i
-            break
-
-    # Find right drop
-    right_idx = peak_idx
-    for i in range(peak_idx, len(y)):
-        if y[i] < y[peak_idx] * drop_threshold:
-            right_idx = i
-            break
-
-    return peak_idx, left_idx, right_idx
-
-def basic_ground_filter(points: np.ndarray, points_attributes, z_threshold):
-        """
-        Segment ground/non-ground by analyzing Z coordinate distribution and assign classification numbers.
-        Steps:
-        1. Export Z to ScalarField
-        2. Find start/end of peak in Z histogram
-        3. Split cloud at peak end
-        4. Assign classification numbers
-        """
-        log.debug("Filtering ground using basic ground filter...")
-        z_values = points[:, 2]
-        # Step 1: Create Z histogram (to make it usable)
-        x, y = create_histogram(z_values)
-        # Step 2: Find peak in Z histogram
-        peak_idx, left_idx, right_idx = find_peak_and_drops(x, y)
-        log.info("Peak at Z=%.2f, threshold at Z=%.2f", x[peak_idx], x[right_idx])
-        # Step 3: Split cloud
-        ground_mask = z_values <= x[right_idx]
-        # Step 4: Update classification using previous values
-        classification = points_attributes['classification']
-        classification[ground_mask] = constants.PCB_CLASSIFICATION_GROUND
-        points_attributes['classification'] = classification
-        log.debug("Assigned classification: ground=%d, non-ground=%d", np.sum(ground_mask), np.sum(~ground_mask))
-        return points_attributes
-
-def cloth_simulation_filter(points: np.ndarray, points_attributes, threshold_factor=0.1, 
+def _cloth_simulation_filter(points: np.ndarray, points_attributes, threshold_factor=0.1, 
                             resolution=1.0, rigidness=3, max_iter=500):
     """Segment ground points from a point cloud using a simplified Cloth Simulation Filter and assign classification.
 
@@ -279,7 +234,7 @@ def cloth_simulation_filter(points: np.ndarray, points_attributes, threshold_fac
     return points_attributes
 
 
-def ransac_floor_segmentation(
+def _ransac_floor_segmentation(
     pcd,
     points_attributes,
     distance_threshold: float,
@@ -384,14 +339,8 @@ def segment_ground(
     """
     log.info("Segmenting ground points using method: %s", method)
 
-    if method == "basic":
-        points_attributes = basic_ground_filter(
-            np.asarray(pcd.points),
-            points_attributes,
-            z_threshold=None,
-        )
-    elif method == "csf":
-        points_attributes = cloth_simulation_filter(
+    if method == "csf":
+        points_attributes = _cloth_simulation_filter(
             np.asarray(pcd.points),
             points_attributes,
             threshold_factor=threshold_factor,
@@ -404,7 +353,7 @@ def segment_ground(
             distance_threshold = 0.05
         if num_iterations is None:
             num_iterations = 1000
-        points_attributes = ransac_floor_segmentation(
+        points_attributes = _ransac_floor_segmentation(
             pcd,
             points_attributes,
             distance_threshold=distance_threshold,
@@ -417,7 +366,7 @@ def segment_ground(
     return pcd, points_attributes
 
 
-def apply_ransac_wall_detection(
+def _apply_ransac_wall_detection(
     points: np.ndarray,
     points_attributes,
     rotation_threshold: float = 0.9,
@@ -501,7 +450,7 @@ def apply_ransac_wall_detection(
     return points_attributes
 
 
-def apply_ransac_ceiling_detection(
+def _apply_ransac_ceiling_detection(
     points: np.ndarray,
     points_attributes,
     facing_up_threshold: float = 0.95,
@@ -640,7 +589,7 @@ def apply_wall_segmentation(
         The original point cloud and updated attributes.
     """
     points = np.asarray(pcd.points)
-    points_attributes = apply_ransac_wall_detection(
+    points_attributes = _apply_ransac_wall_detection(
         points,
         points_attributes,
         rotation_threshold=rotation_threshold,
@@ -674,77 +623,13 @@ def apply_ceiling_segmentation(
         The original point cloud and updated attributes.
     """
     points = np.asarray(pcd.points)
-    points_attributes = apply_ransac_ceiling_detection(
+    points_attributes = _apply_ransac_ceiling_detection(
         points,
         points_attributes,
         facing_up_threshold=facing_up_threshold,
         min_inlier_density=min_inlier_density,
     )
     return pcd, points_attributes
-
-
-def filter_noise_for_none_classified_points(pcd, points_attributes, nb_neighbors=20, std_ratio=2.0):
-    """
-    Apply statistical noise filtering only to points that are still in the
-    initial (unclassified) state, keeping all classified points untouched.
-
-    Args:
-        pcd: Open3D point cloud to filter.
-        points_attributes: Dictionary of point attributes.
-        nb_neighbors: Number of neighbors for statistical outlier removal.
-        std_ratio: Standard deviation ratio threshold.
-    """
-    classification = points_attributes.get("classification", None)
-    if classification is None or len(classification) != len(pcd.points):
-        log.warning(
-            "filter_noise_for_none_classified_points called but 'classification' "
-            "is missing or has mismatched length; falling back to full-cloud noise filter."
-        )
-        return filter_noise(pcd, points_attributes, nb_neighbors, std_ratio)
-
-    classification = np.asarray(classification)
-    unclassified_mask = classification == constants.PCB_CLASSIFICATION_INIT
-    if not np.any(unclassified_mask):
-        log.info("No unclassified points to filter; returning original point cloud.")
-        return pcd, points_attributes
-
-    log.info("Filtering noise on %d unclassified points", np.sum(unclassified_mask))
-
-    # Work on the unclassified subset only
-    unclassified_indices = np.where(unclassified_mask)[0]
-    subset_pcd = pcd.select_by_index(unclassified_indices)
-
-    # Run the same statistical outlier removal as in filter_noise, but on the subset
-    _, subset_keep_idx = subset_pcd.remove_statistical_outlier(
-        nb_neighbors=nb_neighbors,
-        std_ratio=std_ratio
-    )
-
-    # Map kept indices back to original indices
-    kept_unclassified_indices = unclassified_indices[subset_keep_idx]
-
-    # Build a global "keep" mask: all classified points are kept,
-    # unclassified points are kept only if they survived the filter.
-    num_points = len(pcd.points)
-    keep_mask = np.ones(num_points, dtype=bool)
-    # Start by dropping all unclassified points
-    keep_mask[unclassified_indices] = False
-    # Re-enable only the filtered unclassified points
-    keep_mask[kept_unclassified_indices] = True
-
-    final_indices = np.where(keep_mask)[0]
-    new_pcd = pcd.select_by_index(final_indices)
-
-    new_points_attributes = {}
-    for dim, arr in points_attributes.items():
-        arr_np = np.asarray(arr)
-        if len(arr_np) == num_points:
-            new_points_attributes[dim] = arr_np[final_indices]
-        else:
-            # Attributes not per-point (e.g., metadata) are kept as-is
-            new_points_attributes[dim] = arr
-
-    return new_pcd, new_points_attributes
 
 def _dbscan_cluster_mask(labels: np.ndarray) -> np.ndarray:
     """True where Open3D DBSCAN assigned a cluster id (>= 0); False for noise (-1)."""
@@ -830,74 +715,7 @@ def segment_objects_dbscan(pcd, points_attributes, eps, min_points):
     points_attributes["Clusters"] = object_clusters
     return pcd, points_attributes
 
-
-def take_isometric_screenshots(pcd, dir_name, file_prefix=""):
-    """
-    Save front and back isometric PNGs of the point cloud (RGB via pcd.colors).
-
-    If file_prefix is empty, writes:
-        {dir_name}/front_isometric.png, {dir_name}/back_isometric.png
-    Otherwise:
-        {dir_name}/{file_prefix}_front_isometric.png, etc.
-    """
-    if not os.path.exists(dir_name):
-        os.makedirs(dir_name, exist_ok=True)
-
-    width, height = 640, 480
-    renderer = o3d.visualization.rendering.OffscreenRenderer(width, height)
-    # Light blue clear color (RGBA, linear)
-    renderer.scene.set_background(np.array([0.8, 0.9, 1.0, 1.0], dtype=float))
-
-    mat = o3d.visualization.rendering.MaterialRecord()
-    mat.shader = "defaultUnlit"
-    renderer.scene.add_geometry("cloud", pcd, mat)
-
-    center = np.asarray(pcd.get_center(), dtype=float)
-    bounds = pcd.get_axis_aligned_bounding_box()
-    diag = float((bounds.get_max_bound() - bounds.get_min_bound()).max())
-
-    radius = max(1e-6, diag * 1.0)
-    up = [0.0, 0.0, 1.0]
-
-    elev_deg = 35.0
-    elev = np.deg2rad(elev_deg)
-    z_off = radius * np.sin(elev)
-    horiz_r = radius * np.cos(elev)
-
-    views = {
-        "front_isometric": 225.0,
-        "back_isometric": 45.0,
-    }
-
-    for name, az_deg in views.items():
-        theta = np.deg2rad(az_deg)
-        x_off = horiz_r * np.cos(theta)
-        y_off = horiz_r * np.sin(theta)
-        eye = center + np.array([x_off, y_off, z_off], dtype=float)
-
-        renderer.setup_camera(60.0, center, eye, up)
-        img = renderer.render_to_image()
-        if file_prefix:
-            fname = f"{file_prefix}_{name}.png"
-        else:
-            fname = f"{name}.png"
-        o3d.io.write_image(os.path.join(dir_name, fname), img)
-        log.debug("Saved %s/%s", dir_name, fname)
-
-
-def take_screenshot(pcd, dir_name):
-    """
-    Save two screenshots of the point cloud, approximating
-    CloudCompare's "front isometric" and "back isometric" views.
-
-    Images are saved as:
-        {dir_name}/front_isometric.png
-        {dir_name}/back_isometric.png
-    """
-    take_isometric_screenshots(pcd, dir_name, file_prefix="")
-
-
-def _apply_rgb_colors_to_pcd(pcd, points_attributes):
+def apply_rgb_colors_to_pcd(pcd, points_attributes):
     """Set pcd.colors from LAS red/green/blue (same normalization as PCDPreviewer)."""
     red = np.asarray(points_attributes.get("red"))
     green = np.asarray(points_attributes.get("green"))
@@ -910,42 +728,3 @@ def _apply_rgb_colors_to_pcd(pcd, points_attributes):
     if max_val > 0:
         rgb /= max_val
     pcd.colors = o3d.utility.Vector3dVector(rgb)
-
-
-def mask_indices_for_object_vlm_view(classification, objects_clusters, cluster_id):
-    """
-    Ground + target cluster + unclassified (INIT) points only (excludes other clusters, walls, ceiling).
-    """
-    classification = np.asarray(classification)
-    objects_clusters = np.asarray(objects_clusters, dtype=np.int32)
-    ground = classification == constants.PCB_CLASSIFICATION_GROUND
-    # init_pts = classification == constants.PCB_CLASSIFICATION_INIT
-    this_object = objects_clusters == cluster_id
-    # combined = ground | init_pts | this_object
-    combined = ground | this_object
-    return np.where(combined)[0]
-
-
-def segment_objects(
-    pcd,
-    points_attributes,
-    eps,
-    min_points,
-    *,
-    output_folder_path,
-    chunk_index=0,
-    ollama_model="gemma3:4b",
-    vlm_traces_subdir="vlm_object_traces",
-    enable_vlm=True,
-    **kwargs,
-):
-    """
-    DBSCAN object segmentation, optionally followed by per-cluster RGB screenshots and VLM labeling.
-
-    When enable_vlm is False (e.g. setup GUI preview), only DBSCAN runs; no screenshots or Ollama.
-    """
-    pcd, points_attributes = segment_objects_dbscan(
-        pcd, points_attributes, eps, min_points
-    )
-
-    return pcd, points_attributes

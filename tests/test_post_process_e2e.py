@@ -19,7 +19,7 @@ import pytest
 import yaml
 
 from modules.controllers.post_process.main import PostProcessingController
-from modules.models.ai_object_detector import identified_objects_yaml_path
+from modules.models.vlm_tools import identified_objects_yaml_path
 from modules.utils import constants as C
 from modules.utils.config import SegmentorConfig
 
@@ -39,6 +39,7 @@ MIN_POINTS_CLUSTER = 5
 
 # Matches INIT dense-patch point count in ``tests/fixtures/post_process/2_pipeline.las``.
 _CLUSTERED_INIT_POINT_COUNT = 20
+_TEST_VLM_VIEWS_COUNT = 6
 
 MINIMAL_PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -67,6 +68,9 @@ def _write_post_process_config(config_path: Path, original_input: Path, output_d
         "objects_segmentation": {
             "ollama_model": "gemma3:4b",
             "vlm_traces_subdir": "vlm_object_traces",
+        },
+        "vlm": {
+            "views_count": _TEST_VLM_VIEWS_COUNT,
         },
     }
     config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
@@ -102,19 +106,19 @@ def _assert_las_numeric_core(actual_path: Path, expected_path: Path) -> None:
             assert np.array_equal(getattr(actual, dim), getattr(expected, dim))
 
 
-def _stub_isometric_screenshots(pcd, dir_name: str) -> tuple[str, str]:
-    """Avoid Open3D OffscreenRenderer (can segfault headless); matches expected PNG filenames."""
+def _stub_rich_media_screenshots(pcd, dir_name: str, number_of_views: int = _TEST_VLM_VIEWS_COUNT) -> list[str]:
+    """Avoid Open3D OffscreenRenderer (can segfault headless); matches rich_media PNG names."""
     os.makedirs(dir_name, exist_ok=True)
-    front = os.path.join(dir_name, "front_isometric.png")
-    back = os.path.join(dir_name, "back_isometric.png")
-    Path(front).write_bytes(MINIMAL_PNG_BYTES)
-    Path(back).write_bytes(MINIMAL_PNG_BYTES)
-    return front, back
+    paths: list[str] = []
+    for i in range(int(number_of_views)):
+        path = os.path.join(dir_name, f"{i + 1:02d}.png")
+        Path(path).write_bytes(MINIMAL_PNG_BYTES)
+        paths.append(path)
+    return paths
 
 
 def _fake_identify_object_from_views(
-    front_path: str,
-    back_path: str,
+    image_paths,
     *,
     cluster_id: int,
     chunk_index: int = 0,
@@ -182,11 +186,11 @@ def test_post_process_confirm_mocked_vlm_response_valid(tmp_path: Path):
     SegmentorConfig.initialize(str(cfg))
 
     with patch(
-        "modules.models.post_processing_core._take_isometric_screenshot_paths",
-        side_effect=_stub_isometric_screenshots,
+        "modules.models.post_processing_tools.take_rich_media_screenshots",
+        side_effect=_stub_rich_media_screenshots,
     ):
         with patch(
-            "modules.models.post_processing_core.identify_object_from_views",
+            "modules.models.post_processing_tools.identify_object_from_views",
             side_effect=_fake_identify_object_from_views,
         ) as mock_identify:
             ctrl = PostProcessingController()

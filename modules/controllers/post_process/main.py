@@ -3,7 +3,7 @@ import os
 import numpy as np
 
 from modules.models import output_tools
-from modules.models.post_processing_core import (
+from modules.models.post_processing_tools import (
     build_dbscan_preview_pcd,
     build_init_ground_preview_pcd,
     copy_merged_attributes,
@@ -13,6 +13,7 @@ from modules.models.post_processing_core import (
 )
 from modules.utils.config import SegmentorConfig
 from modules.utils.log_utils import get_dual_logger
+from modules.models.vlm_tools import identified_objects_yaml_path
 
 log = get_dual_logger(__name__)
 
@@ -95,7 +96,6 @@ class PostProcessingController:
             vlm_traces_subdir=vlm_traces_subdir,
             original_input_path=original,
         )
-        from modules.models.ai_object_detector import identified_objects_yaml_path
 
         yml = identified_objects_yaml_path(self._result_folder)
         return len(xyz), self._output_las_path, yml

@@ -93,7 +93,7 @@ def _fan_triangulate(vertex_indices: np.ndarray) -> list:
 #  Main reconstruction function
 # ─────────────────────────────────────────────────────────────
 
-def reconstruct_mesh(
+def create_ball_neighbourhood_mesh(
     pcd: o3d.geometry.PointCloud,
     ball_radius: float,
     min_neighbours: int = 4,

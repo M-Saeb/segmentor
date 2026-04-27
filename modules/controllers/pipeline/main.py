@@ -13,9 +13,9 @@ from modules.models import LasIteratorKDTree
 from modules.models import output_tools
 from modules.models.cityjson_export import write_cityjson_mesh_part
 from modules.models.las_tools import las_io
-from modules.models.mesh.ball_neighbourhood_mesh import (
+from modules.models.mesh_tools.ball_neighbourhood_mesh import (
     estimate_ball_radius,
-    reconstruct_mesh,
+    create_ball_neighbourhood_mesh,
 )
 from modules.models import pcd_tools
 from modules.utils.log_utils import get_dual_logger
@@ -437,7 +437,7 @@ class PipelineController:
 
             sub_pcd = pcd.select_by_index(idx)
             try:
-                mesh = reconstruct_mesh(
+                mesh = create_ball_neighbourhood_mesh(
                     sub_pcd,
                     ball_radius=ball_radius,
                     max_faces=max_faces,

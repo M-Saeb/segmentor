@@ -6,7 +6,7 @@ from modules.utils import log_utils
 
 log = log_utils.get_dual_logger(__name__)
 
-def create_views_dict(number_of_views: int):
+def _create_views_dict(number_of_views: int):
     start_azimuth_deg = 225.0
     azimuth_step_deg = 360 / number_of_views
     return {
@@ -14,7 +14,7 @@ def create_views_dict(number_of_views: int):
         for i in range(number_of_views)
     }
 
-def take_rich_media_screenshots(pcd: o3d.geometry.PointCloud, dir_name: str, number_of_views: int = 4):
+def take_rich_media_screenshots(pcd: o3d.geometry.PointCloud, dir_name: str, number_of_views: int):
     """
     Save isometric PNGs of the point cloud (RGB via pcd.colors).
     """
@@ -42,7 +42,7 @@ def take_rich_media_screenshots(pcd: o3d.geometry.PointCloud, dir_name: str, num
     z_off = radius * np.sin(elev)
     horiz_r = radius * np.cos(elev)
 
-    views = create_views_dict(number_of_views)
+    views = _create_views_dict(number_of_views)
     paths = []
     for name, az_deg in views.items():
         theta = np.deg2rad(az_deg)
