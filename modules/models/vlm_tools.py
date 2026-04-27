@@ -9,7 +9,6 @@ from collections.abc import Sequence
 import yaml
 from ollama import chat
 
-from modules.models.runtime_report import RuntimeReport
 from modules.utils import constants
 from modules.utils.log_utils import get_dual_logger
 
@@ -26,25 +25,6 @@ def _encode_image_b64(path: str) -> str:
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode("utf-8")
 
-
-def _parse_ai_label_from_response(text: str) -> str:
-    if not text or not str(text).strip():
-        return "unknown"
-    t = str(text).strip()
-    # Prefer JSON-like "label": "foo"
-    m = re.search(r'"label"\s*:\s*"([^"]*)"', t, re.I)
-    if m:
-        return m.group(1).strip() or "unknown"
-    m = re.search(r'"ai_label"\s*:\s*"([^"]*)"', t, re.I)
-    if m:
-        return m.group(1).strip() or "unknown"
-    # Single line: use first line, strip punctuation
-    line = t.split("\n")[0].strip()
-    line = re.sub(r'^[\s\[\]"\']+|[\s\[\]"\']+$', "", line)
-    if len(line) > 80:
-        line = line[:80] + "..."
-    return line or "unknown"
-
 def _map_ai_label_to_classification(ai_label: str) -> int:
     normalized = str(ai_label).strip().lower()
     if normalized in ["car", "truck", "bus", "motorcycle", "bike", "bicycle"]:
@@ -54,7 +34,7 @@ def _map_ai_label_to_classification(ai_label: str) -> int:
     else:
         return constants.PCB_CLASSIFICATION_OTHER_OBJECTS
 
-def _convert_to_json_string(raw_response: str) -> dict:
+def _raw_response_to_json_dict(raw_response: str) -> dict:
     """
     Extracts and loads the first JSON block for label/description using regex from the response.
     """
@@ -95,7 +75,6 @@ def identify_object_from_views(
     cluster_id: int,
     chunk_index: int,
     ollama_model: str = "gemma3:4b",
-    runtime_report: RuntimeReport | None = None,
 ) -> dict:
     """
     Send multiple isometric PNGs (rotating views) to Ollama and return a record for the YAML registry.
@@ -119,13 +98,13 @@ def identify_object_from_views(
         '3. Only focus on the single object that is at the center of the photo, not the edges\n'
         '4. If you are not sure what the object is, name it "empty"\n'
         '5. The identified object should be standing upright EX: if you see a pole, but it is side ways, name it "empty"\n'
-        '6. The colors of the identified object should make sense to its natural colors, EX: a "tree" without brown or green color should not be identified as a tree, instead put it as "unknown" '
+        '6. The colors of the identified object should make sense to its natural colors, EX: a "tree" without brown or green color should not be identified as a tree, instead put it as "unknown"\n'
         '7. The identified object should make sense in the context of the place, EX: a "candy bar" does not belong in a parking lot, so it should be identified as "unknown"\n'
+        '8. The photos are not too far away or too close to the object, it is close enough to see the object clearly and fully\n'
     )
 
     images_b64 = [_encode_image_b64(p) for p in paths]
 
-    t0 = time.perf_counter()
     try:
         response = chat(
             model=ollama_model,
@@ -140,9 +119,6 @@ def identify_object_from_views(
     except Exception as ex:
         log.warning("identify_object_from_views: Ollama chat failed: %s", ex)
         raise
-    finally:
-        if runtime_report is not None:
-            runtime_report.add_vlm_response_seconds(time.perf_counter() - t0)
 
     raw = ""
     if isinstance(response, dict):
@@ -151,7 +127,7 @@ def identify_object_from_views(
         msg = getattr(response, "message", None)
         raw = getattr(msg, "content", "") if msg else str(response)
 
-    json_dict = _convert_to_json_string(raw)
+    json_dict = _raw_response_to_json_dict(raw)
     ai_label = json_dict["label"]
     description = json_dict["description"]
     normalized_ai_label = str(ai_label).strip().lower()

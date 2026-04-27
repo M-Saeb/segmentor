@@ -8,12 +8,9 @@ from modules.utils.log_utils import get_dual_logger
 
 log = get_dual_logger(__name__)
 
-# Defaults matching scripts/pre_processing.py main() user_input
-_DEFAULT_INPUT_CHUNK_SIZE = 10_000_000
+# Default for output KD-tree tile target size remains viewer-local.
 _DEFAULT_OUTPUT_CHUNK_SIZE = 25_000
-_DEFAULT_NB_NEIGHBORS = 20
-_DEFAULT_STD_RATIO = 2.0
-_DEFAULT_VOXEL_SIZE = 0.15
+_DEFAULT_INPUT_CHUNK_SIZE = 10_000_000
 
 
 class PreProcessingViewer:
@@ -143,6 +140,14 @@ class PreProcessingViewer:
         app = gui.Application.instance
         app.initialize()
 
+        filter_noise_cfg = getattr(self.config, "filter_noise", {}) or {}
+        downsample_cfg = getattr(self.config, "downsample", {}) or {}
+
+        nb_neighbors = float(filter_noise_cfg.get("nb_neighbors", 20))
+        std_ratio = float(filter_noise_cfg.get("std_ratio", 2.0))
+        voxel_size = float(downsample_cfg.get("voxel_size", 0.15))
+
+
         self._window = app.create_window("Pre-processing", 720, 520)
         em = self._window.theme.font_size
 
@@ -169,19 +174,19 @@ class PreProcessingViewer:
             self._layout,
             em,
             "Filter noise: nb_neighbors",
-            float(_DEFAULT_NB_NEIGHBORS),
+            nb_neighbors,
         )
         self._std_ratio_edit = self._add_numeric_row(
             self._layout,
             em,
             "Filter noise: std_ratio",
-            _DEFAULT_STD_RATIO,
+            std_ratio,
         )
         self._voxel_edit = self._add_numeric_row(
             self._layout,
             em,
             "Downsample: voxel_size",
-            _DEFAULT_VOXEL_SIZE,
+            voxel_size,
         )
 
         run_btn = gui.Button("Run pre-processing")

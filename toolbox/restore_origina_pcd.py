@@ -158,7 +158,7 @@ def inlier_mutliple_bound_boxes(
     return bounding_boxes
     
 
-def restore_original_points_in_inliers(
+def restore_original_pcd_data(
     inlier_pcd: o3d.geometry.PointCloud | np.ndarray,
     original_path: str,
 ) -> o3d.geometry.PointCloud:

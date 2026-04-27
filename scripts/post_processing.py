@@ -31,7 +31,8 @@ from modules.models.vlm_tools import (  # noqa: E402
     register_identified_cluster,
     write_identified_objects_yaml,
 )
-from toolbox.restore_origina_pcd import restore_original_points_in_inliers  # noqa: E402
+from modules.models import pcd_tools  # noqa: E402
+from toolbox.restore_origina_pcd import restore_original_pcd_data  # noqa: E402
 from modules.utils import config as config_module  # noqa: E402
 from modules.utils import constants  # noqa: E402
 from modules.utils import log_utils  # noqa: E402
@@ -46,22 +47,6 @@ def _get_vlm_views_count(cfg: config_module.SegmentorConfig) -> int:
         raise ValueError("vlm.views_count must be greater than 0.")
     return views_count
 
-
-def _apply_rgb_colors_to_pcd(
-    pcd: o3d.geometry.PointCloud,
-    points_attributes: dict[str, np.ndarray],
-) -> None:
-    red = np.asarray(points_attributes.get("red"))
-    green = np.asarray(points_attributes.get("green"))
-    blue = np.asarray(points_attributes.get("blue"))
-    n = len(pcd.points)
-    if not (len(red) == len(green) == len(blue) == n):
-        raise ValueError("RGB attribute lengths do not match point count")
-    rgb = np.vstack((red, green, blue)).T.astype(float)
-    max_val = np.max(rgb)
-    if max_val > 0:
-        rgb /= max_val
-    pcd.colors = o3d.utility.Vector3dVector(rgb)
 
 
 def _axis_aligned_bounds_from_pcd(pcd: o3d.geometry.PointCloud) -> dict[str, list[float]]:
@@ -214,14 +199,14 @@ def _run_object_vlm_post_processing(
                 view_attrs[dim] = arr
 
         try:
-            _apply_rgb_colors_to_pcd(view_pcd, view_attrs)
+            pcd_tools.apply_rgb_colors_to_pcd(view_pcd, view_attrs)
         except ValueError as ex:
             log.warning("Cluster %s has invalid RGB (%s); skipping VLM.", cluster_id, ex)
             continue
 
         # Sandbox-style restoration: use cluster inliers to recover original points in the same bbox.
         try:
-            restored_cluster_pcd = restore_original_points_in_inliers(
+            restored_cluster_pcd = restore_original_pcd_data(
                 view_pcd,
                 original_input_path,
             )

@@ -29,7 +29,7 @@ from modules.models.runtime_report import RuntimeReport
 from modules.utils import constants
 from modules.utils.config import SegmentorConfig
 from modules.utils.log_utils import get_dual_logger
-from toolbox.restore_origina_pcd import restore_original_points_in_inliers
+from toolbox.restore_origina_pcd import restore_original_pcd_data
 
 if TYPE_CHECKING:
     from modules.utils import config as config_module
@@ -202,14 +202,15 @@ def run_object_vlm_post_processing(
             else:
                 view_attrs[dim] = arr
 
+        t_img = time.perf_counter() # for runtime report
+
         try:
             pcd_tools.apply_rgb_colors_to_pcd(view_pcd, view_attrs)
         except ValueError as ex:
-            log.warning("Cluster %s has invalid RGB (%s); skipping VLM.", cluster_id, ex)
-            continue
+            log.warning("Cluster %s has invalid RGB (%s); Please check the RGB attributes.", cluster_id, ex)
 
         try:
-            restored_cluster_pcd = restore_original_points_in_inliers(
+            restored_cluster_pcd = restore_original_pcd_data(
                 view_pcd,
                 original_input_path,
             )
@@ -225,7 +226,6 @@ def run_object_vlm_post_processing(
             )
             screenshot_pcd = view_pcd
 
-        t_img = time.perf_counter()
         view_paths = take_rich_media_screenshots(
             screenshot_pcd,
             traces_dir,
@@ -234,13 +234,14 @@ def run_object_vlm_post_processing(
 
         if rpt is not None:
             rpt.add_image_creation_seconds(time.perf_counter() - t_img)
+        
+        t_vlm = time.perf_counter() # for runtime report
         try:
             record = identify_object_from_views(
                 view_paths,
                 cluster_id=int(cluster_id),
                 chunk_index=0,
                 ollama_model=ollama_model,
-                runtime_report=rpt,
             )
             record["bounds"] = _axis_aligned_bounds_from_pcd(screenshot_pcd)
             register_identified_cluster(registry, record)
@@ -248,6 +249,9 @@ def run_object_vlm_post_processing(
             log.info("Cluster %s identified as [[[ %s ]]]: %s.", cluster_id, record.get("ai_label"), record.get("description"))
         except Exception as ex:
             log.warning("VLM call failed for cluster %s: %s", cluster_id, ex, exc_info=True)
+
+        if rpt is not None:
+            rpt.add_vlm_response_seconds(time.perf_counter() - t_vlm)
 
     write_identified_objects_yaml(output_folder_path, registry)
     merged_attrs["classification"] = classification

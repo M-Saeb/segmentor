@@ -60,6 +60,7 @@ class RuntimeReport:
         return {
             "ImageCreationDuration": _seconds_to_hms(self._image_creation_seconds),
             "VLMResponseDuration": _seconds_to_hms(self._vlm_response_seconds),
+            "TotalDuration": _seconds_to_hms(self._image_creation_seconds + self._vlm_response_seconds),
         }
 
     def write_yaml(self, output_folder_path: str) -> None:
