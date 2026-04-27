@@ -18,13 +18,13 @@ from modules.models import pcd_tools
 from modules.models.ai_object_detector import (
     empty_objects_registry,
     identify_object_from_views,
-    identified_objects_yaml_path,
     register_identified_cluster,
     write_identified_objects_yaml,
 )
 from modules.models.las_tools import las_io
 from modules.models.las_tools.las_iterator import LasIteratorBasic
 from modules.models.clusters_manager import ClustersManager
+from modules.models.rich_media import take_rich_media_screenshots
 from modules.models.runtime_report import RuntimeReport
 from modules.utils import constants
 from modules.utils.config import SegmentorConfig
@@ -35,6 +35,8 @@ if TYPE_CHECKING:
     from modules.utils import config as config_module
 
 log = get_dual_logger(__name__)
+
+VLM_RICH_MEDIA_VIEW_COUNT = 6
 
 
 def _want_runtime_report() -> bool:
@@ -144,13 +146,6 @@ def _axis_aligned_bounds_from_pcd(pcd: o3d.geometry.PointCloud) -> dict[str, lis
     }
 
 
-def _take_isometric_screenshot_paths(pcd: o3d.geometry.PointCloud, dir_name: str) -> tuple[str, str]:
-    os.makedirs(dir_name, exist_ok=True)
-    pcd_tools.take_isometric_screenshots(pcd, dir_name, file_prefix="")
-    front = os.path.join(dir_name, "front_isometric.png")
-    back = os.path.join(dir_name, "back_isometric.png")
-    return front, back
-
 
 def run_object_vlm_post_processing(
     merged_attrs: dict[str, np.ndarray],
@@ -224,13 +219,13 @@ def run_object_vlm_post_processing(
             screenshot_pcd = view_pcd
 
         t_img = time.perf_counter()
-        front_path, back_path = _take_isometric_screenshot_paths(screenshot_pcd, traces_dir)
+        view_paths = take_rich_media_screenshots(screenshot_pcd, traces_dir, number_of_views=VLM_RICH_MEDIA_VIEW_COUNT)
+
         if rpt is not None:
             rpt.add_image_creation_seconds(time.perf_counter() - t_img)
         try:
             record = identify_object_from_views(
-                front_path,
-                back_path,
+                view_paths,
                 cluster_id=int(cluster_id),
                 chunk_index=0,
                 ollama_model=ollama_model,
@@ -240,9 +235,7 @@ def run_object_vlm_post_processing(
             register_identified_cluster(registry, record)
             if int(record["classification"]) == constants.PCB_CLASSIFICATION_CAR:
                 classification[cluster_mask] = constants.PCB_CLASSIFICATION_CAR
-                log.info("Cluster %s identified as car.", cluster_id)
-            else:
-                log.info("Cluster %s identified as %s.", cluster_id, record.get("ai_label"))
+            log.info("Cluster %s identified as [[[ %s ]]]: %s.", cluster_id, record.get("ai_label"), record.get("description"))
         except Exception as ex:
             log.warning("VLM call failed for cluster %s: %s", cluster_id, ex, exc_info=True)
 

@@ -2,7 +2,7 @@
 """
 Stage-3 post-processing:
 - Read clustered objects from stage-2 output LAS (`Clusters`),
-- Identify each cluster via VLM from front/back isometric views,
+- Identify each cluster via VLM from multiple isometric views,
 - Relabel only detected cars,
 - Write `3_post_process.las` and `3_objects.yml` (``cars`` / ``other_objects`` with bounds per cluster).
 """
@@ -21,6 +21,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from modules.models import output_tools  # noqa: E402
+from modules.models.rich_media import take_rich_media_screenshots  # noqa: E402
 from modules.models.las_tools import las_io  # noqa: E402
 from modules.models.las_tools.las_iterator import LasIteratorBasic  # noqa: E402
 from modules.models.ai_object_detector import (  # noqa: E402
@@ -34,6 +35,8 @@ from toolbox.restore_origina_pcd import restore_original_points_in_inliers  # no
 from modules.utils import config as config_module  # noqa: E402
 from modules.utils import constants  # noqa: E402
 from modules.utils import log_utils  # noqa: E402
+
+VLM_RICH_MEDIA_VIEW_COUNT = 6
 
 log = log_utils.get_dual_logger(__name__)
 
@@ -53,45 +56,6 @@ def _apply_rgb_colors_to_pcd(
     if max_val > 0:
         rgb /= max_val
     pcd.colors = o3d.utility.Vector3dVector(rgb)
-
-
-def _take_isometric_screenshots(
-    pcd: o3d.geometry.PointCloud,
-    dir_name: str,
-) -> tuple[str, str]:
-    os.makedirs(dir_name, exist_ok=True)
-    width, height = 640, 480
-    renderer = o3d.visualization.rendering.OffscreenRenderer(width, height)
-    mat = o3d.visualization.rendering.MaterialRecord()
-    mat.shader = "defaultUnlit"
-    renderer.scene.add_geometry("cloud", pcd, mat)
-
-    center = np.asarray(pcd.get_center(), dtype=float)
-    bounds = pcd.get_axis_aligned_bounding_box()
-    diag = float((bounds.get_max_bound() - bounds.get_min_bound()).max())
-    radius = max(1e-6, diag * 1.0)
-    up = [0.0, 0.0, 1.0]
-
-    elev = np.deg2rad(35.0)
-    z_off = radius * np.sin(elev)
-    horiz_r = radius * np.cos(elev)
-
-    views = {
-        "front_isometric": 225.0,
-        "back_isometric": 45.0,
-    }
-    out_paths: dict[str, str] = {}
-    for name, az_deg in views.items():
-        theta = np.deg2rad(az_deg)
-        x_off = horiz_r * np.cos(theta)
-        y_off = horiz_r * np.sin(theta)
-        eye = center + np.array([x_off, y_off, z_off], dtype=float)
-        renderer.setup_camera(60.0, center, eye, up)
-        img = renderer.render_to_image()
-        out_path = os.path.join(dir_name, f"{name}.png")
-        o3d.io.write_image(out_path, img)
-        out_paths[name] = out_path
-    return out_paths["front_isometric"], out_paths["back_isometric"]
 
 
 def _axis_aligned_bounds_from_pcd(pcd: o3d.geometry.PointCloud) -> dict[str, list[float]]:
@@ -267,14 +231,10 @@ def _run_object_vlm_post_processing(
             )
             screenshot_pcd = view_pcd
 
-        front_path, back_path = _take_isometric_screenshots(
-            screenshot_pcd,
-            traces_dir,
-        )
+        view_paths = take_rich_media_screenshots(screenshot_pcd, traces_dir, number_of_views=VLM_RICH_MEDIA_VIEW_COUNT)
         try:
             record = identify_object_from_views(
-                front_path,
-                back_path,
+                view_paths,
                 cluster_id=int(cluster_id),
                 chunk_index=0,
                 ollama_model=ollama_model,
