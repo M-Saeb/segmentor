@@ -18,7 +18,12 @@ def _seconds_to_hms(total_seconds: float) -> dict[str, int]:
     s = int(round(max(0.0, float(total_seconds))))
     hours, rem = divmod(s, 3600)
     minute, seconds = divmod(rem, 60)
-    return {"hours": int(hours), "minute": int(minute), "seconds": int(seconds)}
+    return {
+        "hours": int(hours),
+        "minutes": int(minute),
+        "seconds": int(seconds),
+        "total_seconds": int(s),
+    }
 
 
 class RuntimeReport:

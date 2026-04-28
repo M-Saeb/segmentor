@@ -101,6 +101,53 @@ def _mesh_to_boundaries_and_vertices(
     return mesh_vertices.tolist(), boundaries
 
 
+def _point_cloud_to_box_solid(
+    point_cloud: o3d.geometry.PointCloud,
+    vertex_offset: int,
+) -> tuple[list[list[float]], list[list[list[list[int]]]]]:
+    points = np.asarray(point_cloud.points, dtype=np.float64)
+    if points.size == 0:
+        return [], []
+
+    mins = points.min(axis=0)
+    maxs = points.max(axis=0)
+    center = (mins + maxs) / 2.0
+    extents = maxs - mins
+    if np.all(extents <= 0.0):
+        # Degenerate cloud: still emit a tiny box so the object remains visible.
+        extents = np.array([1e-3, 1e-3, 1e-3], dtype=np.float64)
+    else:
+        # Keep non-zero dimensions and minimally inflate collapsed axes.
+        extents = np.where(extents <= 0.0, 1e-3, extents)
+
+    half_x, half_y, half_z = (extents / 2.0).tolist()
+    cx, cy, cz = center.tolist()
+
+    box_vertices = [
+        [cx - half_x, cy - half_y, cz - half_z],  # 0
+        [cx + half_x, cy - half_y, cz - half_z],  # 1
+        [cx + half_x, cy + half_y, cz - half_z],  # 2
+        [cx - half_x, cy + half_y, cz - half_z],  # 3
+        [cx - half_x, cy - half_y, cz + half_z],  # 4
+        [cx + half_x, cy - half_y, cz + half_z],  # 5
+        [cx + half_x, cy + half_y, cz + half_z],  # 6
+        [cx - half_x, cy + half_y, cz + half_z],  # 7
+    ]
+
+    # CityJSON Solid boundaries hierarchy:
+    # [shells -> surfaces -> rings -> vertex indices]
+    surfaces = [
+        [[vertex_offset + 0, vertex_offset + 1, vertex_offset + 2, vertex_offset + 3]],  # bottom
+        [[vertex_offset + 4, vertex_offset + 5, vertex_offset + 6, vertex_offset + 7]],  # top
+        [[vertex_offset + 0, vertex_offset + 1, vertex_offset + 5, vertex_offset + 4]],  # front
+        [[vertex_offset + 1, vertex_offset + 2, vertex_offset + 6, vertex_offset + 5]],  # right
+        [[vertex_offset + 2, vertex_offset + 3, vertex_offset + 7, vertex_offset + 6]],  # back
+        [[vertex_offset + 3, vertex_offset + 0, vertex_offset + 4, vertex_offset + 7]],  # left
+    ]
+    boundaries = [surfaces]
+    return box_vertices, boundaries
+
+
 def write_cityjson_mesh_part(
     mesh_id: str,
     mesh: o3d.geometry.TriangleMesh,
@@ -201,4 +248,97 @@ def write_cityjson_mesh_part(
     with open(out_path, "w", encoding="utf-8") as fo:
         fo.write(json_str + "\n")
     log.info("Wrote mesh '%s' to CityJSON: %s", mesh_id, out_path)
+    return out_path
+
+
+def write_point_cloud_to_citygml_json_box(
+    shape_id: str,
+    point_cloud: o3d.geometry.PointCloud,
+    result_folder_path: str | None = None,
+    output_json_path: str | None = None,
+    append_to_existing: bool = False,
+) -> str:
+    """
+    Append a point cloud as a cube (Solid) to a CityJSON file.
+
+    The cube is axis-aligned and centered on the point cloud AABB center, with
+    side length equal to the largest AABB extent.
+    """
+    if not shape_id or not isinstance(shape_id, str):
+        raise ValueError("mesh_id must be a non-empty string")
+    if not isinstance(point_cloud, o3d.geometry.PointCloud):
+        raise TypeError("point_cloud must be an open3d.geometry.PointCloud")
+
+    out_path = _resolve_output_path(
+        result_folder_path=result_folder_path,
+        output_json_path=output_json_path,
+    )
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+
+    payload = _load_or_init_cityjson(out_path)
+    vertices = payload["vertices"]
+    city_objects = payload["CityObjects"]
+
+    if not isinstance(vertices, list):
+        raise ValueError("CityJSON 'vertices' must be a list")
+    if not isinstance(city_objects, dict):
+        raise ValueError("CityJSON 'CityObjects' must be an object")
+
+    box_vertices, boundaries = _point_cloud_to_box_solid(
+        point_cloud=point_cloud,
+        vertex_offset=len(vertices),
+    )
+    if not boundaries:
+        log.warning("Skipping mesh_id '%s': point cloud has no points", shape_id)
+        return out_path
+
+    vertices.extend(box_vertices)
+
+    existing = city_objects.get(shape_id)
+    if existing is None:
+        city_objects[shape_id] = {
+            "type": "GenericCityObject",
+            "geometry": [
+                {
+                    "type": "Solid",
+                    "lod": "1",
+                    "boundaries": boundaries,
+                }
+            ],
+        }
+    else:
+        geometry = existing.get("geometry")
+        if not isinstance(geometry, list) or len(geometry) == 0:
+            existing["geometry"] = [
+                {
+                    "type": "Solid",
+                    "lod": "1",
+                    "boundaries": boundaries,
+                }
+            ]
+        else:
+            first_geom = geometry[0]
+            if first_geom.get("type") != "Solid":
+                raise ValueError(
+                    f"CityObject '{shape_id}' exists but first geometry is not Solid"
+                )
+            if append_to_existing:
+                first_geom.setdefault("boundaries", [])
+                if not isinstance(first_geom["boundaries"], list):
+                    raise ValueError(
+                        f"CityObject '{shape_id}' has invalid boundaries (expected list)"
+                    )
+                first_geom["boundaries"].extend(boundaries)
+            else:
+                first_geom["lod"] = "1"
+                first_geom["boundaries"] = boundaries
+
+    json_str = json.dumps(
+        payload,
+        indent=2,
+        ensure_ascii=False,
+    )
+    with open(out_path, "w", encoding="utf-8") as fo:
+        fo.write(json_str + "\n")
+    log.info("Wrote point-cloud cube '%s' to CityJSON: %s", shape_id, out_path)
     return out_path

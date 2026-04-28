@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import time
-from typing import TYPE_CHECKING
 
 import numpy as np
 import open3d as o3d
@@ -30,9 +29,6 @@ from modules.utils import constants
 from modules.utils.config import SegmentorConfig
 from modules.utils.log_utils import get_dual_logger
 from toolbox.restore_origina_pcd import restore_original_pcd_data
-
-if TYPE_CHECKING:
-    from modules.utils import config as config_module
 
 log = get_dual_logger(__name__)
 
@@ -115,7 +111,7 @@ def write_las_merged(
 
 
 def resolve_io_paths(
-    cfg: "config_module.SegmentorConfig",
+    cfg: SegmentorConfig,
     input_override: str | None,
     output_override: str | None,
 ) -> tuple[str, str, str]:
