@@ -30,12 +30,34 @@ def _cityjson_base_payload() -> dict[str, Any]:
         "type": "CityJSON",
         "version": "2.0",
         "metadata": {
-            "title": "segmentor-pipeline-export-v4",
-            "referenceSystem": "https://www.opengis.net/def/crs/EPSG/0/25832",
+            "referenceSystem": "https://www.opengis.net/def/crs/EPSG/0/7416",
         },
         "CityObjects": {},
         "vertices": [],
     }
+
+
+def init_cityjson_file(
+    output_json_path: str,
+    geographical_extent: list[float] | None = None,
+) -> None:
+    """
+    Create (or overwrite) a CityJSON file with metadata only, no geometry yet.
+
+    Call this once before the first write_cityjson_mesh_part call so that
+    geographicalExtent and referenceSystem are set on the initial payload
+    rather than being filled in by the first mesh write.
+    """
+    payload = _cityjson_base_payload()
+    if geographical_extent is not None:
+        if len(geographical_extent) != 6:
+            raise ValueError("geographical_extent must be a list of 6 floats: [minx, miny, minz, maxx, maxy, maxz]")
+        payload["metadata"]["geographicalExtent"] = [float(v) for v in geographical_extent]
+    os.makedirs(os.path.dirname(output_json_path) or ".", exist_ok=True)
+    json_str = json.dumps(payload, indent=2, ensure_ascii=False)
+    with open(output_json_path, "w", encoding="utf-8") as f:
+        f.write(json_str + "\n")
+    log.info("Initialised CityJSON file: %s", output_json_path)
 
 
 def _resolve_output_path(
@@ -56,8 +78,7 @@ def _load_or_init_cityjson(path: str) -> dict[str, Any]:
         payload.setdefault("type", "CityJSON")
         payload.setdefault("version", "2.0")
         payload.setdefault("metadata", {
-            "title": "segmentor-pipeline-export-v4",
-            "referenceSystem": "https://www.opengis.net/def/crs/EPSG/0/25832",
+            "title": "segmentor-pipeline-export",
         })
         payload.setdefault("CityObjects", {})
         payload.setdefault("vertices", [])
@@ -154,6 +175,7 @@ def write_cityjson_mesh_part(
     result_folder_path: str | None = None,
     output_json_path: str | None = None,
     append_to_existing: bool = False,
+    city_object_type: str = "GenericCityObject",
 ) -> str:
     """
     Append a mesh part to a CityJSON file.
@@ -161,6 +183,9 @@ def write_cityjson_mesh_part(
     Main parameters:
     - mesh_id: city object id (examples: groundSurface, wallSurface, cars)
     - mesh: Open3D triangle mesh for the object geometry
+    - city_object_type: CityJSON object type string (default "Building").
+      Use "GenericCityObject" for objects that are not part of the building
+      structure (e.g. vehicles).
 
     Optional path parameters follow project conventions:
     - result_folder_path: run output folder used with output_tools
@@ -175,6 +200,8 @@ def write_cityjson_mesh_part(
         raise ValueError("mesh_id must be a non-empty string")
     if not isinstance(mesh, o3d.geometry.TriangleMesh):
         raise TypeError("mesh must be an open3d.geometry.TriangleMesh")
+    if city_object_type not in {"Building", "GenericCityObject"}:
+        raise ValueError("city_object_type must be 'Building' or 'GenericCityObject'")
 
     out_path = _resolve_output_path(
         result_folder_path=result_folder_path,
@@ -204,7 +231,7 @@ def write_cityjson_mesh_part(
     existing = city_objects.get(mesh_id)
     if existing is None:
         city_objects[mesh_id] = {
-            "type": "GenericCityObject",
+            "type": city_object_type,
             "geometry": [
                 {
                     "type": "MultiSurface",
@@ -242,7 +269,6 @@ def write_cityjson_mesh_part(
 
     json_str = json.dumps(
         payload,
-        indent=2,
         ensure_ascii=False,
     )
     with open(out_path, "w", encoding="utf-8") as fo:
@@ -335,7 +361,6 @@ def write_point_cloud_to_citygml_json_box(
 
     json_str = json.dumps(
         payload,
-        indent=2,
         ensure_ascii=False,
     )
     with open(out_path, "w", encoding="utf-8") as fo:

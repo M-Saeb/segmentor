@@ -22,7 +22,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from modules.models.las_tools import las_io  # noqa: E402
-from modules.models.cityjson_export import write_cityjson_mesh_part  # noqa: E402
+from modules.models.cityjson_export import init_cityjson_file, write_cityjson_mesh_part  # noqa: E402
 from modules.models.mesh_tools.ball_neighbourhood_mesh_v2 import (  # noqa: E402
     create_ball_neighbourhood_mesh,
 )
@@ -225,8 +225,8 @@ def main() -> int:
     parser.add_argument("--output", "-o", default=None, help="Override output CityJSON path.")
     parser.add_argument(
         "--display",
-        action="store_true",
-        default=False,
+        type=bool,
+        default=True,
         help="Open an Open3D window to visualise the exported meshes.",
     )
     parser.add_argument(
@@ -313,6 +313,17 @@ def main() -> int:
 
     log.info("Loaded %d points", len(pcd.points))
 
+    bbox = pcd.get_axis_aligned_bounding_box()
+    min_b = np.asarray(bbox.get_min_bound()).tolist()
+    max_b = np.asarray(bbox.get_max_bound()).tolist()
+    geographical_extent = [min_b[0], min_b[1], min_b[2], max_b[0], max_b[1], max_b[2]]
+
+    init_cityjson_file(
+        output_json_path=output_path,
+        geographical_extent=geographical_extent,
+    )
+    log.info("CityJSON initialised with extent %s", geographical_extent)
+
     all_meshes: list[o3d.geometry.TriangleMesh] = []
 
     # --- Ground ---
@@ -323,6 +334,7 @@ def main() -> int:
             mesh_id="groundSurface",
             mesh=ground_mesh,
             output_json_path=output_path,
+            city_object_type="Building",
         )
         all_meshes.append(ground_mesh)
         log.info("Ground mesh written (%d vertices, %d triangles)", len(ground_mesh.vertices), len(ground_mesh.triangles))
@@ -337,6 +349,7 @@ def main() -> int:
             mesh_id="ceilingSurface",
             mesh=ceiling_mesh,
             output_json_path=output_path,
+            city_object_type="Building",
         )
         all_meshes.append(ceiling_mesh)
         log.info("Ceiling mesh written (%d vertices, %d triangles)", len(ceiling_mesh.vertices), len(ceiling_mesh.triangles))
@@ -356,6 +369,7 @@ def main() -> int:
                 mesh_id=f"wallSurface_{wall_idx}",
                 mesh=wall_mesh,
                 output_json_path=output_path,
+                city_object_type="Building",
             )
         all_meshes.extend(wall_meshes)
         log.info("Wall meshes written: %d", len(wall_meshes))
@@ -375,6 +389,7 @@ def main() -> int:
                 mesh_id=f"carSurface_{car_idx}",
                 mesh=car_mesh,
                 output_json_path=output_path,
+                city_object_type="GenericCityObject",
             )
         all_meshes.extend(car_meshes)
         log.info("Car meshes written: %d", len(car_meshes))
