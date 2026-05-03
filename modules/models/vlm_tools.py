@@ -28,7 +28,9 @@ def _map_ai_label_to_classification(ai_label: str) -> int:
     normalized = str(ai_label).strip().lower()
     if normalized in ["car", "truck", "bus", "motorcycle", "bike", "bicycle"]:
         return constants.PCB_CLASSIFICATION_CAR
-    elif normalized in ["empty", "unknown", "structure", "none", "stairs", "vent", "road", "pillar", "ground", "wall", "ceiling", "concrete", "parking lot", "fence"]:
+    elif normalized in ["empty", "unknown", "structure", "none", "stairs", "vent", "road", 
+                        "pillar", "ground", "wall", "ceiling", "concrete", "parking lot",
+                        "fence", "bollard"]:
         return constants.PCB_CLASSIFICATION_STRUCTURE
     else:
         return constants.PCB_CLASSIFICATION_OTHER_OBJECTS
@@ -89,7 +91,7 @@ def identify_object_from_views(
         "You see several isometric views around a LiDAR point cloud region (same scene from different angles) "
         "with a light background. "
         "The scene is for a parking lot area with only the object we want to identify. "
-        "Reply with a single JSON object only, no markdown, in this exact form:\n"
+        "You must reply with a single JSON object ONLY !!, in this exact form:\n"
         '{"label": "<short English object type name>", "description": "<short English description of max 30 words of what you see in the photo>"}\n'
         'Examples are: \n'
         '- {label: "chair", description: "a black chair that fell over"}\n'
@@ -129,9 +131,15 @@ def identify_object_from_views(
         msg = getattr(response, "message", None)
         raw = getattr(msg, "content", "") if msg else str(response)
 
-    json_dict = _raw_response_to_json_dict(raw)
-    ai_label = json_dict["label"]
-    description = json_dict["description"]
+    try:
+        json_dict = _raw_response_to_json_dict(raw)
+        ai_label = json_dict["label"]
+        description = json_dict["description"]
+    except ValueError as ex:
+        log.warning("identify_object_from_views: Failed to parse JSON from Ollama response: %s", ex)
+        ai_label = "empty"
+        description = "error from VLM, see logs for details"
+
     normalized_ai_label = str(ai_label).strip().lower()
 
     return {

@@ -106,6 +106,7 @@ def build_wall_meshes(
     pcd: o3d.geometry.PointCloud,
     points_attributes: dict,
     iterations: int,
+    min_surface_size: int = 100,
 ) -> list[o3d.geometry.TriangleMesh]:
     wall_pcd = _select_by_classification(pcd, points_attributes, constants.PCB_CLASSIFICATION_WALL)
     if len(wall_pcd.points) == 0:
@@ -127,7 +128,8 @@ def build_wall_meshes(
         except Exception as ex:
             log.warning("Skipping wall cluster %d: %s", label, ex)
             continue
-        if len(mesh.vertices) < 100 or len(mesh.triangles) < 100:
+        if len(mesh.vertices) < min_surface_size or len(mesh.triangles) < min_surface_size:
+            # too small to be meaningful, likely noise
             continue
         mesh.paint_uniform_color(np.random.rand(3))
         meshes.append(mesh)
@@ -139,6 +141,7 @@ def build_car_meshes(
     pcd: o3d.geometry.PointCloud,
     points_attributes: dict,
     iterations: int,
+    min_surface_size: int = 100,
 ) -> list[o3d.geometry.TriangleMesh]:
     cluster_vals = np.asarray(points_attributes["Clusters"])
     class_vals = np.asarray(points_attributes["classification"])
@@ -155,6 +158,9 @@ def build_car_meshes(
             mesh = _pcd_to_mesh(cluster_pcd, iterations)
         except Exception as ex:
             log.warning("Skipping car cluster %d: %s", cluster_id, ex)
+            continue
+        if mesh is None or len(mesh.vertices) < min_surface_size or len(mesh.triangles) < min_surface_size:
+            # too small to be meaningful, likely noise
             continue
         mesh.paint_uniform_color(np.random.rand(3))
         meshes.append(mesh)
@@ -245,11 +251,25 @@ def main() -> int:
         help=f"Mesh refinement iterations for the wall stage (1–{_MAX_SUPPORTED_ITERATIONS}, default 1).",
     )
     parser.add_argument(
+        "--min-wall-surface-size",
+        type=int,
+        default=200,
+        metavar="N",
+        help=f"Minimum number of vertices/triangles for a surface to be included (default 200).",
+    )
+    parser.add_argument(
         "--car-iterations",
         type=int,
         default=1,
         metavar="N",
         help=f"Mesh refinement iterations for the car stage (1–{_MAX_SUPPORTED_ITERATIONS}, default 1).",
+    )
+    parser.add_argument(
+        "--min-car-surface-size",
+        type=int,
+        default=50,
+        metavar="N",
+        help=f"Minimum number of vertices/triangles for a surface to be included (default 50).",
     )
     args = parser.parse_args()
 
@@ -325,7 +345,12 @@ def main() -> int:
 
     # --- Walls ---
     try:
-        wall_meshes = build_wall_meshes(pcd, points_attributes, args.wall_iterations)
+        wall_meshes = build_wall_meshes(
+            pcd,
+            points_attributes,
+            args.wall_iterations,
+            min_surface_size=args.min_wall_surface_size
+        )
         for wall_idx, wall_mesh in enumerate(wall_meshes):
             write_cityjson_mesh_part(
                 mesh_id=f"wallSurface_{wall_idx}",
@@ -339,7 +364,12 @@ def main() -> int:
 
     # --- Cars ---
     try:
-        car_meshes = build_car_meshes(pcd, points_attributes, args.car_iterations)
+        car_meshes = build_car_meshes(
+            pcd,
+            points_attributes,
+            args.car_iterations,
+            min_surface_size=args.min_car_surface_size,
+        )
         for car_idx, car_mesh in enumerate(car_meshes):
             write_cityjson_mesh_part(
                 mesh_id=f"carSurface_{car_idx}",
