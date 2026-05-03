@@ -44,7 +44,12 @@ objects_segmentation:
 collect_runtime_report: true
 
 vlm:
-  views_count: 6
+  views_count: 4
+  # model: "qwen3.5:27b"
+  model: "qwen3-vl:8b"
+  # host: "http://192.168.196.108:11434"
+  # model: "gemma3:4b"
+  host: "http://localhost:11434"
 
 cityjson_export:
   enable: true

@@ -53,8 +53,12 @@ class SegmentorConfig:
         "enable": False,
         "eps": 0.05,
         "min_points": 10,
-        "ollama_model": "gemma3:4b",
         "vlm_traces_subdir": "vlm_object_traces",
+    }
+    vlm: dict = {
+        "views_count": 4,
+        "model": "gemma3:4b",
+        "host": "http://localhost:11434",
     }
     result = {
         "display_result": True,

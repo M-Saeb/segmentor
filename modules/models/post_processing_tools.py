@@ -155,7 +155,6 @@ def run_object_vlm_post_processing(
     xyz: np.ndarray,
     original_input_path: str,
     output_folder_path: str,
-    ollama_model: str,
     vlm_traces_subdir: str,
 ) -> None:
     classification = np.asarray(merged_attrs.get("classification"))
@@ -237,7 +236,6 @@ def run_object_vlm_post_processing(
                 view_paths,
                 cluster_id=int(cluster_id),
                 chunk_index=0,
-                ollama_model=ollama_model,
             )
             record["bounds"] = _axis_aligned_bounds_from_pcd(screenshot_pcd)
             register_identified_cluster(registry, record)
@@ -285,7 +283,6 @@ def run_post_process_pipeline(
     chunk_size: int,
     eps: float,
     min_points: int,
-    ollama_model: str,
     vlm_traces_subdir: str,
     original_input_path: str,
 ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
@@ -305,7 +302,6 @@ def run_post_process_pipeline(
         xyz=xyz,
         original_input_path=original_input_path,
         output_folder_path=objects_folder_path,
-        ollama_model=ollama_model,
         vlm_traces_subdir=vlm_traces_subdir,
     )
     write_las_merged(

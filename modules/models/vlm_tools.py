@@ -1,15 +1,14 @@
 import base64
 import os
 import re
-import time
 import json
-import re
 from collections.abc import Sequence
 
 import yaml
-from ollama import chat
+from ollama import Client
 
 from modules.utils import constants
+from modules.utils.config import SegmentorConfig
 from modules.utils.log_utils import get_dual_logger
 
 log = get_dual_logger(__name__)
@@ -74,7 +73,6 @@ def identify_object_from_views(
     *,
     cluster_id: int,
     chunk_index: int,
-    ollama_model: str = "gemma3:4b",
 ) -> dict:
     """
     Send multiple isometric PNGs (rotating views) to Ollama and return a record for the YAML registry.
@@ -82,6 +80,10 @@ def identify_object_from_views(
     paths = list(image_paths)
     if not paths:
         raise ValueError("identify_object_from_views requires at least one image path.")
+
+    vlm_cfg = SegmentorConfig.get_instance().vlm
+    ollama_model = vlm_cfg.get("model", "gemma3:4b")
+    ollama_host = vlm_cfg.get("host", "http://localhost:11434")
 
     prompt = (
         "You see several isometric views around a LiDAR point cloud region (same scene from different angles) "
@@ -106,7 +108,7 @@ def identify_object_from_views(
     images_b64 = [_encode_image_b64(p) for p in paths]
 
     try:
-        response = chat(
+        response = Client(host=ollama_host).chat(
             model=ollama_model,
             messages=[
                 {

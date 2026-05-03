@@ -82,7 +82,6 @@ class PostProcessingController:
             )
 
         obj_cfg = getattr(self.config, "objects_segmentation", {}) or {}
-        ollama_model = str(obj_cfg.get("ollama_model", "gemma3:4b"))
         vlm_traces_subdir = str(obj_cfg.get("vlm_traces_subdir", "vlm_object_traces"))
 
         xyz, _attrs = run_post_process_pipeline(
@@ -92,7 +91,6 @@ class PostProcessingController:
             chunk_size=int(self.config.chunk_size),
             eps=float(eps),
             min_points=int(min_points),
-            ollama_model=ollama_model,
             vlm_traces_subdir=vlm_traces_subdir,
             original_input_path=original,
         )
