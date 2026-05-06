@@ -38,7 +38,7 @@ wall_segmentation:
 
 objects_segmentation:
   enable: true
-  eps: 0.35
+  eps: 0.45
   min_points: 15
 
 collect_runtime_report: true

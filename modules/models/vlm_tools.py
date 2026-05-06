@@ -2,6 +2,7 @@ import base64
 import os
 import re
 import json
+import time
 from collections.abc import Sequence
 
 import yaml
@@ -26,11 +27,11 @@ def _encode_image_b64(path: str) -> str:
 
 def _map_ai_label_to_classification(ai_label: str) -> int:
     normalized = str(ai_label).strip().lower()
-    if normalized in ["car", "truck", "bus", "motorcycle", "bike", "bicycle"]:
+    if normalized in ["car", "truck", "bus", "motorcycle", "bike", "bicycle", "van", "minivan", "suv", "vehicle"]:
         return constants.PCB_CLASSIFICATION_CAR
     elif normalized in ["empty", "unknown", "structure", "none", "stairs", "vent", "road", 
                         "pillar", "ground", "wall", "ceiling", "concrete", "parking lot",
-                        "fence", "bollard"]:
+                        "fence", "bollard", "curb", "sidewalk"]:
         return constants.PCB_CLASSIFICATION_STRUCTURE
     else:
         return constants.PCB_CLASSIFICATION_OTHER_OBJECTS
@@ -89,56 +90,69 @@ def identify_object_from_views(
 
     prompt = (
         "You see several isometric views around a LiDAR point cloud region (same scene from different angles) "
-        "with a light background. "
-        "The scene is for a parking lot area with only the object we want to identify. "
+        "with a light blue background. "
+        "The scene is for a parking lot area with only the object we want to identify, with the photos rotating around the object. "
         "You must reply with a single JSON object ONLY !!, in this exact form:\n"
-        '{"label": "<short English object type name>", "description": "<short English description of max 30 words of what you see in the photo>"}\n'
+        '{"label": "<single word object name>", "description": "<description of 30 words max of what you see in the photo>"}\n'
         'Examples are: \n'
         '- {label: "chair", description: "a black chair that fell over"}\n'
-        '- {label: "table", description: "a brown table with some dishes on it"}\n'
+        '- {label: "van", description: "a brown van parked in the lot"}\n'
         "Some guidelines:\n"
-        '1. Some photos could be a piece of a wall, ground, pillars, or no actually identifiable object, name those "empty"\n'
+        '1. Some photos could be a piece of a wall, ground, pillars, or no actual identifiable object, name those "empty"\n'
         '2. Some photos could be a cloud of random points that are not part of an object, name those "empty"\n'
         '3. Only focus on the single object that is at the center of the photo, not the edges\n'
         '4. If you are not sure what the object is, name it "empty"\n'
         '5. The identified object should be standing upright EX: if you see a pole, but it is side ways, name it "empty"\n'
         '6. The colors of the identified object should make sense to its natural colors, EX: a "tree" without brown or green color should not be identified as a tree, instead put it as "unknown"\n'
         '7. The identified object should make sense in the context of the place, EX: a "candy bar" does not belong in a parking lot, so it should be identified as "unknown"\n'
-        '8. The photos are not too far away or too close to the object, it is close enough to see the object clearly and fully\n'
+        '8. The photos are not too far away or too close to the object, it is close enough to see the object clearly and fully, so an answer like "birds from far away" is not valid one. Name those "empty"\n'
     )
 
     images_b64 = [_encode_image_b64(p) for p in paths]
 
-    try:
-        response = Client(host=ollama_host).chat(
-            model=ollama_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                    "images": images_b64,
-                }
-            ],
-        )
-    except Exception as ex:
-        log.warning("identify_object_from_views: Ollama chat failed: %s", ex)
-        raise
+    _MAX_RETRIES = 3
+    _RETRY_DELAY_SECONDS = 2
 
-    raw = ""
-    if isinstance(response, dict):
-        raw = (response.get("message") or {}).get("content") or ""
+    ai_label = "empty"
+    description = "error from VLM, see logs for details"
+
+    for attempt in range(_MAX_RETRIES):
+        try:
+            response = Client(host=ollama_host).chat(
+                model=ollama_model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,
+                        "images": images_b64,
+                    }
+                ],
+            )
+
+            raw = ""
+            if isinstance(response, dict):
+                raw = (response.get("message") or {}).get("content") or ""
+            else:
+                msg = getattr(response, "message", None)
+                raw = getattr(msg, "content", "") if msg else str(response)
+
+            json_dict = _raw_response_to_json_dict(raw)
+            ai_label = json_dict["label"]
+            description = json_dict["description"]
+            break
+
+        except Exception as ex:
+            log.warning(
+                "identify_object_from_views: attempt %d/%d failed (cluster=%d): %s",
+                attempt + 1, _MAX_RETRIES, cluster_id, ex,
+            )
+            if attempt < _MAX_RETRIES - 1:
+                time.sleep(_RETRY_DELAY_SECONDS)
     else:
-        msg = getattr(response, "message", None)
-        raw = getattr(msg, "content", "") if msg else str(response)
-
-    try:
-        json_dict = _raw_response_to_json_dict(raw)
-        ai_label = json_dict["label"]
-        description = json_dict["description"]
-    except ValueError as ex:
-        log.warning("identify_object_from_views: Failed to parse JSON from Ollama response: %s", ex)
-        ai_label = "empty"
-        description = "error from VLM, see logs for details"
+        log.error(
+            "identify_object_from_views: all %d attempts failed for cluster=%d, defaulting to empty",
+            _MAX_RETRIES, cluster_id,
+        )
 
     normalized_ai_label = str(ai_label).strip().lower()
 

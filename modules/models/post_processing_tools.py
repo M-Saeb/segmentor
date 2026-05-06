@@ -25,13 +25,14 @@ from modules.models.las_tools.las_iterator import LasIteratorBasic
 from modules.models.clusters_manager import ClustersManager
 from modules.models.rich_media_tools import take_rich_media_screenshots
 from modules.models.runtime_report import RuntimeReport
+from modules.models.cluster_tools import build_original_pcds_per_cluster
 from modules.utils import constants
 from modules.utils.config import SegmentorConfig
 from modules.utils.log_utils import get_dual_logger
-from toolbox.restore_origina_pcd import restore_original_pcd_data
 
 log = get_dual_logger(__name__)
 
+OBJECTS_CLUSTER_COUNT_THRESHOLD = 50
 
 def _want_runtime_report() -> bool:
     return bool(getattr(SegmentorConfig.get_instance(), "collect_runtime_report", False))
@@ -176,16 +177,38 @@ def run_object_vlm_post_processing(
     pcd_all = o3d.geometry.PointCloud()
     pcd_all.points = o3d.utility.Vector3dVector(xyz)
     n_points = len(xyz)
-
-    log.info("Running VLM post-processing for %d clusters", len(cluster_ids))
-
     rpt = RuntimeReport.get_instance() if _want_runtime_report() else None
 
+
+    valid_cluster_ids = []
     for cluster_id in cluster_ids.tolist():
         cluster_mask = objects_clusters == int(cluster_id)
         if not np.any(cluster_mask):
             log.warning("Skipping empty cluster %s", cluster_id)
             continue
+        indices = np.where(cluster_mask)[0]
+        if len(indices) < OBJECTS_CLUSTER_COUNT_THRESHOLD:
+            log.debug("Skipping cluster %s: only %d points (minimum %d).", cluster_id, len(indices), OBJECTS_CLUSTER_COUNT_THRESHOLD)
+            continue
+        valid_cluster_ids.append(cluster_id)
+
+    log.info("Running VLM post-processing for %d clusters", len(valid_cluster_ids))
+
+    t_img = time.perf_counter() # for runtime report
+    original_pcds = build_original_pcds_per_cluster(
+        original_path=original_input_path,
+        xyz=xyz,
+        objects_clusters=objects_clusters,
+        cluster_ids=valid_cluster_ids,
+    )
+    duration = time.perf_counter() - t_img
+    log.info("Built original PCDs for clusters in %.2f seconds", duration)
+    rpt.add_image_creation_seconds(duration)
+
+    # We use cluster_id for fetching the related PCD and cluster_index for loging and naming
+    # EX: cluster_id=5 may be the 3rd cluster in valid_cluster_ids, so cluster_index=3
+    for cluster_index, cluster_id in enumerate(valid_cluster_ids):
+        cluster_mask = objects_clusters == int(cluster_id)
         indices = np.where(cluster_mask)[0]
         view_pcd = pcd_all.select_by_index(indices.tolist())
 
@@ -204,21 +227,10 @@ def run_object_vlm_post_processing(
         except ValueError as ex:
             log.warning("Cluster %s has invalid RGB (%s); Please check the RGB attributes.", cluster_id, ex)
 
-        try:
-            restored_cluster_pcd = restore_original_pcd_data(
-                view_pcd,
-                original_input_path,
-            )
-            if len(restored_cluster_pcd.points) > 0:
-                screenshot_pcd = restored_cluster_pcd
-            else:
-                screenshot_pcd = view_pcd
-        except Exception as ex:
-            log.warning(
-                "Failed restoring original points for cluster %s (%s); using cluster points.",
-                cluster_id,
-                ex,
-            )
+        restored_cluster_pcd = original_pcds.get(int(cluster_id))
+        if restored_cluster_pcd is not None and len(restored_cluster_pcd.points) > 0:
+            screenshot_pcd = restored_cluster_pcd
+        else:
             screenshot_pcd = view_pcd
 
         view_paths = take_rich_media_screenshots(
@@ -240,7 +252,13 @@ def run_object_vlm_post_processing(
             record["bounds"] = _axis_aligned_bounds_from_pcd(screenshot_pcd)
             register_identified_cluster(registry, record)
             classification[cluster_mask] = record["classification"]
-            log.info("Cluster %s identified as [[[ %s ]]]: %s.", cluster_id, record.get("ai_label"), record.get("description"))
+            log.info(
+                "%.2f%%: Cluster %s identified as [[[ %s ]]]: %s.",
+                (cluster_index/len(valid_cluster_ids)) * 100,
+                cluster_id,
+                record.get("ai_label"),
+                record.get("description")
+            )
         except Exception as ex:
             log.warning("VLM call failed for cluster %s: %s", cluster_id, ex, exc_info=True)
 
