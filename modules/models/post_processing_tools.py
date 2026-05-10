@@ -253,7 +253,7 @@ def run_object_vlm_post_processing(
             register_identified_cluster(registry, record)
             classification[cluster_mask] = record["classification"]
             log.info(
-                "%.2f%%: Cluster %s identified as [[[ %s ]]]: %s.",
+                "%.2f%%: Cluster ID %s identified as [[ %s ]]: %s.",
                 (cluster_index/len(valid_cluster_ids)) * 100,
                 cluster_id,
                 record.get("ai_label"),
