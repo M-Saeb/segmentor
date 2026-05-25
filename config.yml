@@ -38,8 +38,9 @@ wall_segmentation:
 
 objects_segmentation:
   enable: true
-  eps: 0.45
-  min_points: 15
+  eps: 0.35
+  min_points: 10
+  create_unique_trace_dirs: false
 
 collect_runtime_report: true
 

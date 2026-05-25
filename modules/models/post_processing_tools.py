@@ -173,6 +173,11 @@ def run_object_vlm_post_processing(
     traces_dir = os.path.join(output_folder_path, vlm_traces_subdir)
     os.makedirs(traces_dir, exist_ok=True)
 
+    cfg = SegmentorConfig.get_instance()
+    _unique_trace_dirs = bool(
+        cfg.objects_segmentation.get("create_unique_trace_dirs", False)
+    )
+
     objects_clusters = np.asarray(merged_attrs["Clusters"], dtype=np.int32)
     pcd_all = o3d.geometry.PointCloud()
     pcd_all.points = o3d.utility.Vector3dVector(xyz)
@@ -233,9 +238,11 @@ def run_object_vlm_post_processing(
         else:
             screenshot_pcd = view_pcd
 
+        cluster_traces_dir = os.path.join(traces_dir, str(cluster_id)) if _unique_trace_dirs else traces_dir
+        os.makedirs(cluster_traces_dir, exist_ok=True)
         view_paths = take_rich_media_screenshots(
             screenshot_pcd,
-            traces_dir,
+            cluster_traces_dir,
             number_of_views=_get_vlm_views_count(),
         )
 

@@ -54,6 +54,7 @@ class SegmentorConfig:
         "eps": 0.05,
         "min_points": 10,
         "vlm_traces_subdir": "vlm_object_traces",
+        "create_unique_trace_dirs": False,
     }
     vlm: dict = {
         "views_count": 4,
