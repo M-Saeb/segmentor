@@ -19,7 +19,7 @@ import pytest
 import yaml
 
 from modules.controllers.post_process.main import PostProcessingController
-from modules.models.vlm_tools import identified_objects_yaml_path
+from modules.models.vlm_tools import CLUSTER_DATA_FILENAME, make_cluster_record
 from modules.utils import constants as C
 from modules.utils.config import SegmentorConfig
 
@@ -40,6 +40,8 @@ MIN_POINTS_CLUSTER = 5
 # Matches INIT dense-patch point count in ``tests/fixtures/post_process/2_pipeline.las``.
 _CLUSTERED_INIT_POINT_COUNT = 20
 _TEST_VLM_VIEWS_COUNT = 6
+_FAKE_VLM_CLASS = "VEHICLE"
+_DATA_YML_KEYS = ["CLUSTER_ID", "CLASS", "NAME", "DESCRIPTION", "EXTRA"]
 
 MINIMAL_PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -55,7 +57,12 @@ def _reset_segmentor_singleton():
     SegmentorConfig._config_path = None
 
 
-def _write_post_process_config(config_path: Path, original_input: Path, output_dir: Path) -> None:
+def _write_post_process_config(
+    config_path: Path,
+    original_input: Path,
+    output_dir: Path,
+    unique_trace_dirs: bool = False,
+) -> None:
     payload = {
         "input_file": str(original_input),
         "chunk_size": 1_000_000,
@@ -68,6 +75,7 @@ def _write_post_process_config(config_path: Path, original_input: Path, output_d
         "objects_segmentation": {
             "ollama_model": "gemma3:4b",
             "vlm_traces_subdir": "vlm_object_traces",
+            "create_unique_trace_dirs": unique_trace_dirs,
         },
         "vlm": {
             "views_count": _TEST_VLM_VIEWS_COUNT,
@@ -85,7 +93,7 @@ def _xyz(las: laspy.LasData) -> np.ndarray:
     return np.column_stack((las.x, las.y, las.z)).astype(np.float64)
 
 
-def _assert_las_numeric_core(actual_path: Path, expected_path: Path) -> None:
+def _assert_las_numeric_core(actual_path: Path, expected_path: Path, skip_dims: tuple[str, ...] = ()) -> None:
     actual = laspy.read(actual_path)
     expected = laspy.read(expected_path)
 
@@ -102,6 +110,8 @@ def _assert_las_numeric_core(actual_path: Path, expected_path: Path) -> None:
         "Clusters",
     )
     for dim in preferred_dims:
+        if dim in skip_dims:
+            continue
         if hasattr(actual, dim) and hasattr(expected, dim):
             assert np.array_equal(getattr(actual, dim), getattr(expected, dim))
 
@@ -126,21 +136,21 @@ def _fake_identify_object_from_views(
     runtime_report=None,
 ):
     """Synthetic VLM record: structural validity only (no assertion on semantic label text)."""
-    rec = {
-        "chunk_index": int(chunk_index),
-        "cluster_id": int(cluster_id),
-        "classification": int(C.PCB_CLASSIFICATION_OTHER_OBJECTS),
-        "ai_label": "stub",
-        "raw_response": '{"label":"stub"}',
-    }
-    assert isinstance(rec["raw_response"], str) and rec["raw_response"].strip()
-    return rec
+    return make_cluster_record(
+        cluster_id=int(cluster_id),
+        chunk_index=int(chunk_index),
+        vlm_class=_FAKE_VLM_CLASS,
+        name="stub",
+        description="stub description",
+    )
 
 
 def _assert_valid_vlm_response_dict(d: dict) -> None:
     assert isinstance(d, dict)
-    assert "classification" in d and "ai_label" in d and "raw_response" in d
-    assert isinstance(d["raw_response"], str) and len(d["raw_response"].strip()) > 0
+    for key in ("cluster_id", "vlm_class", "name", "description", "classification"):
+        assert key in d
+    assert d["vlm_class"] in C.VLM_CLASS_TO_CLASSIFICATION
+    assert d["classification"] == C.VLM_CLASS_TO_CLASSIFICATION[d["vlm_class"]]
 
 
 def test_post_process_confirm_no_clusters(tmp_path: Path):
@@ -155,7 +165,7 @@ def test_post_process_confirm_no_clusters(tmp_path: Path):
     SegmentorConfig.initialize(str(cfg))
 
     ctrl = PostProcessingController()
-    n_pts, out_las, yml_path = ctrl.confirm_post_processing(
+    n_pts, out_las, traces_dir = ctrl.confirm_post_processing(
         eps=EPS_NO_CLUSTER,
         min_points=MIN_POINTS_NO_CLUSTER,
     )
@@ -165,27 +175,25 @@ def test_post_process_confirm_no_clusters(tmp_path: Path):
     assert Path(out_las).name == "3_post_process.las"
     _assert_las_numeric_core(Path(out_las), EXPECTED_NO_VLM_LAS)
 
-    assert Path(yml_path).exists()
-    assert Path(yml_path) == Path(identified_objects_yaml_path(str(output_dir)))
-    registry = yaml.safe_load(Path(yml_path).read_text(encoding="utf-8"))
-    assert registry["cars"]["total"] == 0
-    assert registry["other_objects"]["total"] == 0
-    assert registry["cars"]["items"] == []
-    assert registry["other_objects"]["items"] == []
+    assert Path(traces_dir) == output_dir / "vlm_object_traces"
+    assert not list(output_dir.rglob(CLUSTER_DATA_FILENAME))
+    assert not (output_dir / "3_objects.yml").exists()
 
 
-def test_post_process_confirm_mocked_vlm_response_valid(tmp_path: Path):
-    """One DBSCAN cluster; screenshots and VLM stubbed — assert integration + valid dict shape only."""
+@pytest.mark.parametrize("unique_trace_dirs", [False, True])
+def test_post_process_confirm_mocked_vlm_response_valid(tmp_path: Path, unique_trace_dirs: bool):
+    """One DBSCAN cluster; screenshots and VLM stubbed — assert integration, data.yml and LAS class codes."""
     output_dir = tmp_path / "result"
     output_dir.mkdir(parents=True)
     original_input = tmp_path / "original_input.las"
     _seed_post_process_fixtures(output_dir, original_input)
 
     cfg = tmp_path / "config.yml"
-    _write_post_process_config(cfg, original_input, output_dir)
+    _write_post_process_config(cfg, original_input, output_dir, unique_trace_dirs=unique_trace_dirs)
     SegmentorConfig.initialize(str(cfg))
 
-    with patch(
+    # The fixture cluster (20 points) is below the production minimum cluster size.
+    with patch("modules.models.post_processing_tools.OBJECTS_CLUSTER_COUNT_THRESHOLD", 1), patch(
         "modules.models.post_processing_tools.take_rich_media_screenshots",
         side_effect=_stub_rich_media_screenshots,
     ):
@@ -194,7 +202,7 @@ def test_post_process_confirm_mocked_vlm_response_valid(tmp_path: Path):
             side_effect=_fake_identify_object_from_views,
         ) as mock_identify:
             ctrl = PostProcessingController()
-            n_pts, out_las, yml_path = ctrl.confirm_post_processing(
+            n_pts, out_las, traces_dir = ctrl.confirm_post_processing(
                 eps=EPS_CLUSTER,
                 min_points=MIN_POINTS_CLUSTER,
             )
@@ -206,7 +214,7 @@ def test_post_process_confirm_mocked_vlm_response_valid(tmp_path: Path):
 
     assert n_pts > 0
     assert Path(out_las).exists()
-    _assert_las_numeric_core(Path(out_las), EXPECTED_MOCK_VLM_LAS)
+    _assert_las_numeric_core(Path(out_las), EXPECTED_MOCK_VLM_LAS, skip_dims=("classification",))
 
     out = laspy.read(out_las)
     assert hasattr(out, "Clusters"), "3_post_process.las must include Extra Bytes `Clusters` (DBSCAN ids)"
@@ -216,15 +224,22 @@ def test_post_process_confirm_mocked_vlm_response_valid(tmp_path: Path):
     assert int(np.count_nonzero(cl)) == _CLUSTERED_INIT_POINT_COUNT
     assert int(np.max(cl)) == 1
     cls = np.asarray(out.classification, dtype=np.int32)
-    object_mask = cls == C.PCB_CLASSIFICATION_OBJECTS
-    assert bool(np.all(object_mask == (cl > 0))), "Clusters>0 must match OBJECTS classification from DBSCAN"
+    expected_cls = np.asarray(laspy.read(EXPECTED_MOCK_VLM_LAS).classification, dtype=np.int32)
+    assert bool(np.all(expected_cls[cl > 0] == C.PCB_CLASSIFICATION_OBJECTS))
+    assert np.array_equal(cls[cl == 0], expected_cls[cl == 0])
+    assert bool(np.all(cls[cl > 0] == C.VLM_CLASS_TO_CLASSIFICATION[_FAKE_VLM_CLASS])), (
+        "Clustered points must carry the LAS code of their VLM class"
+    )
 
-    registry = yaml.safe_load(Path(yml_path).read_text(encoding="utf-8"))
-    assert "cars" in registry and "other_objects" in registry
-    assert registry["cars"]["total"] == 0
-    assert registry["other_objects"]["total"] == 1
-    assert len(registry["other_objects"]["items"]) == 1
-    item = registry["other_objects"]["items"][0]
-    assert "cluster_id" in item and "bounds" in item
-    assert isinstance(item["bounds"], dict)
-    assert "min" in item["bounds"] and "max" in item["bounds"]
+    assert not (output_dir / "3_objects.yml").exists()
+    cluster_dir = Path(traces_dir) / "1" if unique_trace_dirs else Path(traces_dir)
+    data_path = cluster_dir / CLUSTER_DATA_FILENAME
+    assert data_path.exists()
+    assert len(list(cluster_dir.glob("*.png"))) == _TEST_VLM_VIEWS_COUNT
+    data = yaml.safe_load(data_path.read_text(encoding="utf-8"))
+    assert list(data.keys()) == _DATA_YML_KEYS
+    assert data["CLUSTER_ID"] == 1
+    assert data["CLASS"] == _FAKE_VLM_CLASS
+    assert data["NAME"] == "stub"
+    assert data["DESCRIPTION"] == "stub description"
+    assert data["EXTRA"] == {}

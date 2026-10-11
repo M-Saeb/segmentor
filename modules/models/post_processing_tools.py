@@ -1,6 +1,6 @@
 """
 Post-processing: merge pipeline LAS (`2_pipeline.las`), run DBSCAN (`segment_objects_dbscan`),
-VLM per cluster, write `3_post_process.las` and object registry YAML.
+VLM per cluster, write `3_post_process.las` and a `data.yml` next to each cluster's screenshots.
 
 Pipeline output is classification-only (no DBSCAN clusters); clusters are created here.
 """
@@ -15,10 +15,9 @@ import open3d as o3d
 from modules.models import output_tools
 from modules.models import pcd_tools
 from modules.models.vlm_tools import (
-    empty_objects_registry,
     identify_object_from_views,
-    register_identified_cluster,
-    write_identified_objects_yaml,
+    make_cluster_record,
+    write_cluster_data_yaml,
 )
 from modules.models.las_tools import las_io
 from modules.models.las_tools.las_iterator import LasIteratorBasic
@@ -142,15 +141,6 @@ def cluster_ids_from_attributes(merged_attrs: dict[str, np.ndarray], n_points: i
     return np.asarray(sorted(np.unique(objects_clusters[objects_clusters > 0])), dtype=np.int32)
 
 
-def _axis_aligned_bounds_from_pcd(pcd: o3d.geometry.PointCloud) -> dict[str, list[float]]:
-    bbox = pcd.get_axis_aligned_bounding_box()
-    return {
-        "min": np.asarray(bbox.get_min_bound(), dtype=float).tolist(),
-        "max": np.asarray(bbox.get_max_bound(), dtype=float).tolist(),
-    }
-
-
-
 def run_object_vlm_post_processing(
     merged_attrs: dict[str, np.ndarray],
     xyz: np.ndarray,
@@ -164,10 +154,8 @@ def run_object_vlm_post_processing(
 
     cluster_ids = cluster_ids_from_attributes(merged_attrs, len(xyz))
     os.makedirs(output_folder_path, exist_ok=True)
-    registry = empty_objects_registry()
     if len(cluster_ids) == 0:
         log.info("No object clusters after DBSCAN; skipping VLM.")
-        write_identified_objects_yaml(output_folder_path, registry)
         return
 
     traces_dir = os.path.join(output_folder_path, vlm_traces_subdir)
@@ -208,7 +196,8 @@ def run_object_vlm_post_processing(
     )
     duration = time.perf_counter() - t_img
     log.info("Built original PCDs for clusters in %.2f seconds", duration)
-    rpt.add_image_creation_seconds(duration)
+    if rpt is not None:
+        rpt.add_image_creation_seconds(duration)
 
     # We use cluster_id for fetching the related PCD and cluster_index for loging and naming
     # EX: cluster_id=5 may be the 3rd cluster in valid_cluster_ids, so cluster_index=3
@@ -248,7 +237,7 @@ def run_object_vlm_post_processing(
 
         if rpt is not None:
             rpt.add_image_creation_seconds(time.perf_counter() - t_img)
-        
+
         t_vlm = time.perf_counter() # for runtime report
         try:
             record = identify_object_from_views(
@@ -256,23 +245,29 @@ def run_object_vlm_post_processing(
                 cluster_id=int(cluster_id),
                 chunk_index=0,
             )
-            record["bounds"] = _axis_aligned_bounds_from_pcd(screenshot_pcd)
-            register_identified_cluster(registry, record)
             classification[cluster_mask] = record["classification"]
             log.info(
-                "%.2f%%: Cluster ID %s identified as [[ %s ]]: %s.",
+                "%.2f%%: Cluster ID %s identified as [[ %s / %s ]]: %s.",
                 (cluster_index/len(valid_cluster_ids)) * 100,
                 cluster_id,
-                record.get("ai_label"),
+                record.get("vlm_class"),
+                record.get("name"),
                 record.get("description")
             )
         except Exception as ex:
             log.warning("VLM call failed for cluster %s: %s", cluster_id, ex, exc_info=True)
+            record = make_cluster_record(
+                cluster_id=int(cluster_id),
+                description=f"VLM call failed: {ex}",
+            )
+            classification[cluster_mask] = record["classification"]
+
+        # Same directory as the screenshots; overwritten per cluster when trace dirs are shared.
+        write_cluster_data_yaml(cluster_traces_dir, record)
 
         if rpt is not None:
             rpt.add_vlm_response_seconds(time.perf_counter() - t_vlm)
 
-    write_identified_objects_yaml(output_folder_path, registry)
     merged_attrs["classification"] = classification
 
 

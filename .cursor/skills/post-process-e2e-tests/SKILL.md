@@ -28,11 +28,11 @@ Use this workspace’s Segmentor conda interpreter when running commands (see `.
 | Pipeline / original inputs | [`tests/fixtures/post_process/2_pipeline.las`](tests/fixtures/post_process/2_pipeline.las), [`original_input.las`](tests/fixtures/post_process/original_input.las) |
 | Golden outputs | [`expected_post_process_no_vlm.las`](tests/fixtures/post_process/expected_post_process_no_vlm.las), [`expected_post_process_mock_vlm.las`](tests/fixtures/post_process/expected_post_process_mock_vlm.las) |
 
-[`PostProcessingController.confirm_post_processing`](modules/controllers/post_process/main.py) merges **`2_pipeline.las`**, runs DBSCAN and optionally VLM, writes **`3_post_process.las`** and **`3_objects.yml`**. Post-process output LAS includes the Extra Bytes dimension **`Clusters`** (DBSCAN global cluster ids; 0 = none). Config **`input_file`** must reference the **`original_input.las`** path used for downstream restore/screenshot workflows.
+[`PostProcessingController.confirm_post_processing`](modules/controllers/post_process/main.py) merges **`2_pipeline.las`**, runs DBSCAN and optionally VLM, writes **`3_post_process.las`** and a **`data.yml`** next to each cluster's screenshots under `vlm_object_traces/` (in `<cluster_id>/` when `create_unique_trace_dirs` is true). Post-process output LAS includes the Extra Bytes dimension **`Clusters`** (DBSCAN global cluster ids; 0 = none). Config **`input_file`** must reference the **`original_input.las`** path used for downstream restore/screenshot workflows.
 
 Frozen constants in the test module (`EPS_NO_CLUSTER`, `MIN_POINTS_NO_CLUSTER`, `EPS_CLUSTER`, `MIN_POINTS_CLUSTER`) must stay aligned with how the golden LAS files were generated.
 
-The **`identify_object_from_views`** integration test uses **`unittest.mock.patch`** plus a stub for **`_take_rich_media_screenshot_paths`** so Open3D **OffscreenRenderer** is never used (headless-safe). Tests assert **structural validity** of the mocked VLM dict (`classification`, `ai_label`, non-empty `raw_response`), **not** semantic label content.
+The **`identify_object_from_views`** integration test uses **`unittest.mock.patch`** plus a stub for **`_take_rich_media_screenshot_paths`** so Open3D **OffscreenRenderer** is never used (headless-safe). Tests assert **structural validity** of the mocked VLM record (`vlm_class`, `name`, `description`, `classification` matching the class), the `data.yml` keys (`CLUSTER_ID`, `CLASS`, `NAME`, `DESCRIPTION`, `EXTRA: {}`), and that clustered points carry the class's LAS code — **not** semantic label content. The mocked test patches `OBJECTS_CLUSTER_COUNT_THRESHOLD` because the fixture cluster has only 20 points.
 
 ## When tests fail: produce a failure report
 
@@ -41,14 +41,14 @@ Do **not** stop at “tests failed.” After collecting pytest output, deliver a
 ### 1. Capture facts
 
 - Which test failed (`test_post_process_confirm_no_clusters`, `test_post_process_confirm_mocked_vlm_response_valid`).
-- Failure location: **LAS** comparison, **`3_objects.yml`**, config/setup, or **mock** assertion.
+- Failure location: **LAS** comparison, **`data.yml`**, config/setup, or **mock** assertion.
 - Traceback line and message.
 
 ### 2. Classify using assertion helpers
 
 **LAS (`_assert_las_numeric_core`):** XYZ `allclose`, then shared dims (`classification`, `intensity`, …) when present on both sides.
 
-**Empty-registry test:** YAML totals zero for cars and other_objects.
+**No-cluster test:** no `data.yml` is written and no `3_objects.yml` exists.
 
 **Mocked-VLM test:** Patches must remain applied in import path **`modules.models.post_processing_tools`**. If **`eglInitialize` / segfault** appears, the screenshot stub was bypassed—restore **`_take_rich_media_screenshot_paths`** patch.
 

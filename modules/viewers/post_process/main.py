@@ -168,10 +168,10 @@ class PostProcessingViewer:
             if err_holder[0]:
                 self._show_message("Error", err_holder[0])
                 return
-            n, las_path, yml_path = result_holder[0]
+            n, las_path, traces_dir = result_holder[0]
             self._show_message(
                 "Done",
-                f"Wrote {n:,} points to:\n{las_path}\n\nRegistry:\n{yml_path}",
+                f"Wrote {n:,} points to:\n{las_path}\n\nVLM traces (images + data.yml):\n{traces_dir}",
             )
 
         app.post_to_main_thread(self._window, _run_on_main_thread)

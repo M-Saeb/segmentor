@@ -94,7 +94,7 @@ flowchart LR
     A[(Raw .las)] --> S1[Stage 1<br/>Pre-processing]
     S1 -->|1_pre_processing.las<br/>1_pre_processing_index.json| S2[Stage 2<br/>Segmentation]
     S2 -->|2_pipeline.las| S3[Stage 3<br/>Clustering &<br/>Identification]
-    S3 -->|3_post_process.las<br/>3_objects.yml| S4[Stage 4<br/>Exportation]
+    S3 -->|3_post_process.las<br/>per-cluster data.yml| S4[Stage 4<br/>Exportation]
     S4 --> B[(citygml.city.json)]
 ```
 
@@ -102,7 +102,7 @@ flowchart LR
 |---|---|---|---|
 | **1. Pre-processing** | Turns a heavy, noisy raw scan into a compact, ordered form | Statistical outlier removal, voxel downsampling, sorting into spatial chunks with a KD tree | `1_pre_processing.las`, `1_pre_processing_index.json` |
 | **2. Segmentation** | Classifies structural points chunk by chunk | Iterative RANSAC plane fitting with per-class rules (Z-histogram position, plane orientation, position relative to other planes) | `2_pipeline.las` (with `Classification`) |
-| **3. Clustering & Identification** | Groups object points and identifies each group | DBSCAN clustering, multi-view rendering of the original full-resolution points, VLM query with JSON validation and up to 3 retries | `3_post_process.las` (with `Clustering`), `3_objects.yml` |
+| **3. Clustering & Identification** | Groups object points and identifies each group | DBSCAN clustering, multi-view rendering of the original full-resolution points, VLM query with JSON validation and up to 3 retries | `3_post_process.las` (with `Clustering`), a `data.yml` per cluster in `vlm_object_traces/` |
 | **4. Exportation** | Converts points into meshes in a standard format | BNSA meshing inside an iterative complexity-reduction loop | `citygml.city.json` (CityJSON v2) |
 
 Stage 1 is the only stage that loads the full point cloud into memory, and it
@@ -123,7 +123,12 @@ scan does not need any special attributes:
 | `PCB_CLASSIFICATION_CEILING` | 4 | Ceiling surface |
 | `PCB_CLASSIFICATION_STRUCTURE` | 5 | Structure without a clear surface type |
 | `PCB_CLASSIFICATION_OBJECTS` | 6 | Object without an identified category |
-| `PCB_CLASSIFICATION_CAR` / `..._OTHER_OBJECTS` | 7 / 8 | Identified object categories (values 7–254 are reserved for categories) |
+| `PCB_CLASSIFICATION_VEHICLE` (alias `..._CAR`) | 7 | VLM class `VEHICLE` |
+| `PCB_CLASSIFICATION_OTHER_OBJECTS` | 8 | VLM class `OTHER` |
+| `PCB_CLASSIFICATION_BUILDING` | 9 | VLM class `BUILDING` |
+| `PCB_CLASSIFICATION_PERSON` | 10 | VLM class `PERSON` |
+| `PCB_CLASSIFICATION_VEGETATION` | 11 | VLM class `VEGETATION` |
+| `PCB_CLASSIFICATION_UNKNOWN` | 12 | VLM class `UNKNOWN` (values 7–254 are reserved for object categories) |
 
 `Clustering` is an integer cluster ID per point. `0` means the point belongs to
 no object, `1` is the first object cluster, `2` the second, and so on.
@@ -382,8 +387,7 @@ All output goes to `result.output_folder_path`:
 | `2_pipeline.yml` | Stage 2 | The confirmed pipeline (actions and parameters) |
 | `2_pipeline.las` | Stage 2 | Points with structural `Classification` values |
 | `3_post_process.las` | Stage 3 | Points with `Clustering` IDs and object classes |
-| `3_objects.yml` | Stage 3 | Identified objects and their bounds |
-| `vlm_object_traces/` | Stage 3 | Rendered views and VLM responses per cluster, for debugging |
+| `vlm_object_traces/` | Stage 3 | Rendered views plus a `data.yml` (`CLUSTER_ID`, `CLASS`, `NAME`, `DESCRIPTION`, `EXTRA`) per cluster. With `objects_segmentation.create_unique_trace_dirs: true` each cluster gets its own `<cluster_id>/` subfolder; otherwise the files are overwritten by each cluster |
 | `3_runtime_report.yml` | Stage 3 | Optional timing report |
 | `citygml.city.json` | Stage 4 | CityJSON v2 meshes (for example, `groundSurface`, `wallSurface_N`, `carSurface_N`) |
 

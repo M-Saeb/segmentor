@@ -13,7 +13,6 @@ from modules.models.post_processing_tools import (
 )
 from modules.utils.config import SegmentorConfig
 from modules.utils.log_utils import get_dual_logger
-from modules.models.vlm_tools import identified_objects_yaml_path
 
 log = get_dual_logger(__name__)
 
@@ -73,7 +72,7 @@ class PostProcessingController:
 
     def confirm_post_processing(self, eps: float, min_points: int) -> tuple[int, str, str]:
         """
-        DBSCAN + VLM + write `3_post_process.las`. Returns (point_count, output_las, objects_yml path).
+        DBSCAN + VLM + write `3_post_process.las`. Returns (point_count, output_las, VLM traces dir holding images + data.yml).
         """
         original = os.path.abspath(str(getattr(self.config, "input_file", "")).strip())
         if not original or not os.path.isfile(original):
@@ -95,5 +94,5 @@ class PostProcessingController:
             original_input_path=original,
         )
 
-        yml = identified_objects_yaml_path(self._result_folder)
-        return len(xyz), self._output_las_path, yml
+        traces_dir = os.path.join(self._result_folder, vlm_traces_subdir)
+        return len(xyz), self._output_las_path, traces_dir

@@ -3,8 +3,8 @@
 Stage-3 post-processing:
 - Read clustered objects from stage-2 output LAS (`Clusters`),
 - Identify each cluster via VLM from multiple isometric views,
-- Relabel only detected cars,
-- Write `3_post_process.las` and `3_objects.yml` (``cars`` / ``other_objects`` with bounds per cluster).
+- Relabel each cluster with the LAS code of its VLM class,
+- Write `3_post_process.las` and a `data.yml` next to each cluster's screenshots.
 """
 
 from __future__ import annotations
@@ -25,16 +25,13 @@ from modules.models.rich_media_tools import take_rich_media_screenshots  # noqa:
 from modules.models.las_tools import las_io  # noqa: E402
 from modules.models.las_tools.las_iterator import LasIteratorBasic  # noqa: E402
 from modules.models.vlm_tools import (  # noqa: E402
-    empty_objects_registry,
     identify_object_from_views,
-    identified_objects_yaml_path,
-    register_identified_cluster,
-    write_identified_objects_yaml,
+    make_cluster_record,
+    write_cluster_data_yaml,
 )
 from modules.models import pcd_tools  # noqa: E402
 from toolbox.restore_origina_pcd import restore_original_pcd_data  # noqa: E402
 from modules.utils import config as config_module  # noqa: E402
-from modules.utils import constants  # noqa: E402
 from modules.utils import log_utils  # noqa: E402
 
 log = log_utils.get_dual_logger(__name__)
@@ -47,14 +44,6 @@ def _get_vlm_views_count(cfg: config_module.SegmentorConfig) -> int:
         raise ValueError("vlm.views_count must be greater than 0.")
     return views_count
 
-
-
-def _axis_aligned_bounds_from_pcd(pcd: o3d.geometry.PointCloud) -> dict[str, list[float]]:
-    bbox = pcd.get_axis_aligned_bounding_box()
-    return {
-        "min": np.asarray(bbox.get_min_bound(), dtype=float).tolist(),
-        "max": np.asarray(bbox.get_max_bound(), dtype=float).tolist(),
-    }
 
 
 def _merge_chunks(input_path: str, chunk_size: int) -> tuple[np.ndarray, dict[str, np.ndarray]]:
@@ -159,7 +148,6 @@ def _run_object_vlm_post_processing(
     xyz: np.ndarray,
     original_input_path: str,
     output_folder_path: str,
-    ollama_model: str,
     vlm_traces_subdir: str,
 ) -> None:
     classification = np.asarray(merged_attrs.get("classification"))
@@ -168,14 +156,17 @@ def _run_object_vlm_post_processing(
 
     cluster_ids = _cluster_ids_from_attributes(merged_attrs, len(xyz))
     os.makedirs(output_folder_path, exist_ok=True)
-    registry = empty_objects_registry()
     if len(cluster_ids) == 0:
         log.info("No object clusters found in stage-2 output.")
-        write_identified_objects_yaml(output_folder_path, registry)
         return
 
     traces_dir = os.path.join(output_folder_path, vlm_traces_subdir)
     os.makedirs(traces_dir, exist_ok=True)
+
+    cfg = config_module.SegmentorConfig.get_instance()
+    unique_trace_dirs = bool(
+        (getattr(cfg, "objects_segmentation", {}) or {}).get("create_unique_trace_dirs", False)
+    )
 
     objects_clusters = np.asarray(merged_attrs["Clusters"], dtype=np.int32)
     pcd_all = o3d.geometry.PointCloud()
@@ -224,9 +215,10 @@ def _run_object_vlm_post_processing(
 
         vlm_views_count = _get_vlm_views_count(cfg)
 
+        cluster_traces_dir = os.path.join(traces_dir, str(cluster_id)) if unique_trace_dirs else traces_dir
         view_paths = take_rich_media_screenshots(
             screenshot_pcd,
-            traces_dir,
+            cluster_traces_dir,
             number_of_views=vlm_views_count,
         )
         try:
@@ -234,19 +226,14 @@ def _run_object_vlm_post_processing(
                 view_paths,
                 cluster_id=int(cluster_id),
                 chunk_index=0,
-                ollama_model=ollama_model,
             )
-            record["bounds"] = _axis_aligned_bounds_from_pcd(screenshot_pcd)
-            register_identified_cluster(registry, record)
-            if int(record["classification"]) == constants.PCB_CLASSIFICATION_CAR:
-                classification[cluster_mask] = constants.PCB_CLASSIFICATION_CAR
-                log.info("Cluster %s identified as car.", cluster_id)
-            else:
-                log.info("Cluster %s identified as %s.", cluster_id, record.get("ai_label"))
+            log.info("Cluster %s identified as %s / %s.", cluster_id, record["vlm_class"], record["name"])
         except Exception as ex:
             log.warning("VLM call failed for cluster %s: %s", cluster_id, ex, exc_info=True)
+            record = make_cluster_record(cluster_id=int(cluster_id), description=f"VLM call failed: {ex}")
+        classification[cluster_mask] = record["classification"]
+        write_cluster_data_yaml(cluster_traces_dir, record)
 
-    write_identified_objects_yaml(output_folder_path, registry)
     merged_attrs["classification"] = classification
 
 
@@ -272,7 +259,6 @@ def main() -> int:
     os.makedirs(objects_folder_path, exist_ok=True)
 
     obj_cfg = getattr(cfg, "objects_segmentation", {}) or {}
-    ollama_model = str(obj_cfg.get("ollama_model", "gemma3:4b"))
     vlm_traces_subdir = str(obj_cfg.get("vlm_traces_subdir", "vlm_object_traces"))
     original_input_path = os.path.abspath(str(getattr(cfg, "input_file", "")).strip())
     if not original_input_path or not os.path.isfile(original_input_path):
@@ -289,7 +275,6 @@ def main() -> int:
             xyz=xyz,
             original_input_path=original_input_path,
             output_folder_path=objects_folder_path,
-            ollama_model=ollama_model,
             vlm_traces_subdir=vlm_traces_subdir,
         )
     except (KeyError, ValueError, RuntimeError) as ex:
@@ -304,7 +289,7 @@ def main() -> int:
         merged_attrs=merged_attrs,
     )
     print(f"Wrote {len(xyz):,} points to {output_path}")
-    print(f"Wrote object registry to {identified_objects_yaml_path(objects_folder_path)}")
+    print(f"Wrote per-cluster data.yml under {os.path.join(objects_folder_path, vlm_traces_subdir)}")
     return 0
 
 

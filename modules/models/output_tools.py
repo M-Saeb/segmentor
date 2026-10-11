@@ -2,7 +2,6 @@ from typing import Union
 import os
 import yaml
 from modules.utils import config
-from modules.models.vlm_tools import identified_objects_yaml_path
 from modules.utils.log_utils import get_dual_logger
 from .las_tools.las_pipeline_wrapper import LasPipelineWrapper
 
@@ -66,10 +65,6 @@ def get_post_process_output_las_path(result_folder_path: Union[str, None] = None
     if result_folder_path is None:
         result_folder_path = init_result_folder_path(use_existing_folder=True)
     return os.path.join(result_folder_path, "3_post_process.las")
-
-def path_for_identified_objects_yaml(result_folder_path: str) -> str:
-    """Path to identified_objects.yml under the run output folder."""
-    return identified_objects_yaml_path(result_folder_path)
 
 def create_pipeline_yaml_file(pipeline_data: dict, result_folder_path: Union[str, None]= None) -> str:
     if result_folder_path is None:
