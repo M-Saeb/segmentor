@@ -2,6 +2,8 @@ import yaml
 import os
 import tempfile
 
+from modules.utils import constants
+
 class SegmentorConfig:
     """
     Load configuration from a YAML file and expose it as attributes.
@@ -57,9 +59,20 @@ class SegmentorConfig:
         "create_unique_trace_dirs": False,
     }
     vlm: dict = {
+        "provider": "ollama",
         "views_count": 4,
-        "model": "gemma3:4b",
-        "host": "http://localhost:11434",
+        "ollama": {
+            "model": "gemma3:4b",
+            "host": "http://localhost:11434",
+        },
+        "claude": {
+            "model": "claude-haiku-5-5",
+            "effort": "low",
+            "max_tokens": 4096,
+            "max_retries": 2,
+            "timeout_seconds": 120,
+            "refusal_fallback": True,
+        },
     }
     result = {
         "display_result": True,
@@ -202,4 +215,20 @@ class SegmentorConfig:
         if min_pts < 2:
             raise ValueError(
                 f"objects_segmentation.min_points must be >= 2, got {min_pts}"
+            )
+
+        vlm_cfg = config_data.get("vlm", self.vlm) or {}
+        provider = str(vlm_cfg.get("provider", "ollama")).strip().lower()
+        if provider not in constants.VLM_PROVIDERS:
+            raise ValueError(
+                f"vlm.provider must be one of {constants.VLM_PROVIDERS}, got {provider!r}"
+            )
+        views_count = int(vlm_cfg.get("views_count", 6))
+        if views_count <= 0:
+            raise ValueError(f"vlm.views_count must be greater than 0, got {views_count}")
+        claude_cfg = vlm_cfg.get("claude") or {}
+        effort = claude_cfg.get("effort", "low")
+        if effort not in constants.CLAUDE_EFFORTS:
+            raise ValueError(
+                f"vlm.claude.effort must be one of {constants.CLAUDE_EFFORTS}, got {effort!r}"
             )

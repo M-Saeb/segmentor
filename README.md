@@ -55,9 +55,9 @@ in 3D data:
 2. It uses **DBSCAN** to group the remaining points into object clusters.
 3. It renders each cluster from several angles, which turns its 3D geometry
    into a set of 2D images.
-4. It sends those images to a VLM, served locally through
-   [Ollama](https://docs.ollama.com), which names the object and explains in a
-   short description what it saw. The description makes each answer traceable.
+4. It sends those images to a VLM, either served locally through
+   [Ollama](https://docs.ollama.com) or Claude through the Anthropic API, which
+   names the object and explains in a short description what it saw. The description makes each answer traceable.
 5. It converts the result into meshes and exports them in the
    **CityGML / CityJSON v2** standard.
 
@@ -223,7 +223,8 @@ segmentor/
 │   │   ├── pcd_tools.py         # RANSAC segmentation, DBSCAN clustering
 │   │   ├── pre_process_tools.py # Noise filter, downsampling, KD-tree indexing
 │   │   ├── rich_media_tools.py  # Multi-view cluster rendering
-│   │   ├── vlm_tools.py         # Ollama VLM interface, prompt and response validation
+│   │   ├── vlm_tools.py         # VLM prompt, retries and response validation
+│   │   ├── vlm_providers/       # One backend per VLM (ollama_provider.py, claude_provider.py)
 │   │   ├── cityjson_export.py   # CityJSON v2 writer
 │   │   └── runtime_report.py    # Timing report (3_runtime_report.yml)
 │   └── utils/                   # Config singleton, constants, logging
@@ -237,11 +238,14 @@ segmentor/
 └── tests/                       # End-to-end tests with LAS fixtures
 ```
 
-To use a VLM provider other than Ollama, you only need to change
-`modules/models/vlm_tools.py`.
+`vlm.provider` in `config.yml` selects the VLM backend (`ollama` or `claude`).
+To add another backend, add a class with a `generate(prompt, images_b64) -> str`
+method to `modules/models/vlm_providers/` and register it in
+`get_vlm_provider()`. The prompt, retries and parsing stay shared in
+`vlm_tools.py`.
 
 **Tech stack:** Python 3.11 · NumPy · SciPy · Laspy · Open3D (processing,
-visualization, GUI) · Ollama (VLM serving) · PyYAML · pytest.
+visualization, GUI) · Ollama or the Anthropic SDK (VLM) · PyYAML · pytest.
 
 ---
 
@@ -253,7 +257,7 @@ visualization, GUI) · Ollama (VLM serving) · PyYAML · pytest.
 |---|---|
 | **OS** | Developed and evaluated on **Ubuntu 22.04 LTS**. The pinned `environment.yml` targets Linux x86-64. |
 | **Conda** | [Miniconda or Anaconda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html) |
-| **Ollama** | [Install Ollama](https://docs.ollama.com) to serve the VLM locally or on a remote host |
+| **Ollama** *or* **Anthropic API key** | [Install Ollama](https://docs.ollama.com) to serve the VLM locally or on a remote host, or use Claude through the Anthropic API (see [3.3](#33-choose-a-vlm)) |
 | **GPU** | Recommended for Stage 3. See the [hardware recommendations](#54-recommendations). |
 | **Display** | Open3D GUI windows need a graphical session. X11 is recommended (see `run.sh`). |
 
@@ -267,7 +271,9 @@ conda env create -f environment.yml
 conda activate segmentor
 ```
 
-### 3.3 Pull a VLM
+### 3.3 Choose a VLM
+
+**Option A: Ollama (local).** Pull a model:
 
 ```bash
 # Light model, fits a laptop GPU with 8 GB of VRAM
@@ -277,8 +283,21 @@ ollama pull gemma3:4b
 ollama pull gemma3:27b
 ```
 
-Make sure the Ollama server is running (`ollama serve`). Then set `vlm.model`
-and `vlm.host` in `config.yml`.
+Make sure the Ollama server is running (`ollama serve`). Then set
+`vlm.provider: ollama` and `vlm.ollama.model` / `vlm.ollama.host` in
+`config.yml`.
+
+**Option B: Claude (Anthropic API).** No GPU needed. Put your API key in the
+environment (never in `config.yml`), then set `vlm.provider: claude`:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...      # Windows: set ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Each cluster sends `views_count` images of 640×480 pixels, about 3–4k input
+tokens at 8 views. `vlm.claude.model` defaults to `claude-opus-5-5`; use
+`claude-sonnet-5-5` or `claude-haiku-5-5` for cheaper runs. A missing or wrong
+key stops post-processing at the first cluster with an error.
 
 ### 3.4 Run the tests (optional)
 
@@ -319,8 +338,14 @@ Commonly tuned parameters:
 | `ceiling_segmentation.facing_up_threshold` | float | Orientation tolerance for ceiling planes |
 | `objects_segmentation.eps` / `min_points` | float / int | DBSCAN epsilon and minimum cluster size |
 | `vlm.views_count` | int | Images rendered per cluster. **8 was the best value in the evaluation.** |
-| `vlm.model` | str | Ollama model tag, for example `gemma3:27b` |
-| `vlm.host` | str | Ollama endpoint, for example `http://localhost:11434` |
+| `vlm.provider` | str | VLM backend: `ollama` (default) or `claude` |
+| `vlm.ollama.model` | str | Ollama model tag, for example `gemma3:27b` (older configs with `vlm.model` still work) |
+| `vlm.ollama.host` | str | Ollama endpoint, for example `http://localhost:11434` (older configs with `vlm.host` still work) |
+| `vlm.claude.model` | str | Claude model ID, default `claude-opus-5-5` |
+| `vlm.claude.effort` | str | `low` (default), `medium`, `high`, `xhigh` or `max`: how much Claude reasons before answering |
+| `vlm.claude.max_tokens` | int | Output limit per request, including reasoning (default `4096`) |
+| `vlm.claude.max_retries` / `timeout_seconds` | int / float | SDK retries for rate limits and server errors (default `2`), and request timeout (default `120`) |
+| `vlm.claude.refusal_fallback` | bool | If Claude's safety filter declines a request, rerun it on another model (default `true`) |
 | `collect_runtime_report` | bool | Write per-step timings to `3_runtime_report.yml` |
 
 ### 4.2 Interactive GUI workflow

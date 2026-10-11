@@ -24,6 +24,7 @@ from modules.models import output_tools  # noqa: E402
 from modules.models.rich_media_tools import take_rich_media_screenshots  # noqa: E402
 from modules.models.las_tools import las_io  # noqa: E402
 from modules.models.las_tools.las_iterator import LasIteratorBasic  # noqa: E402
+from modules.models.vlm_providers import VLMFatalError  # noqa: E402
 from modules.models.vlm_tools import (  # noqa: E402
     identify_object_from_views,
     make_cluster_record,
@@ -228,6 +229,8 @@ def _run_object_vlm_post_processing(
                 chunk_index=0,
             )
             log.info("Cluster %s identified as %s / %s.", cluster_id, record["vlm_class"], record["name"])
+        except VLMFatalError:
+            raise
         except Exception as ex:
             log.warning("VLM call failed for cluster %s: %s", cluster_id, ex, exc_info=True)
             record = make_cluster_record(cluster_id=int(cluster_id), description=f"VLM call failed: {ex}")
@@ -277,7 +280,7 @@ def main() -> int:
             output_folder_path=objects_folder_path,
             vlm_traces_subdir=vlm_traces_subdir,
         )
-    except (KeyError, ValueError, RuntimeError) as ex:
+    except (KeyError, ValueError, RuntimeError) as ex:  # includes VLMFatalError
         print(str(ex), file=sys.stderr)
         return 1
 

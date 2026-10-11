@@ -243,3 +243,32 @@ def test_post_process_confirm_mocked_vlm_response_valid(tmp_path: Path, unique_t
     assert data["NAME"] == "stub"
     assert data["DESCRIPTION"] == "stub description"
     assert data["EXTRA"] == {}
+
+
+def test_post_process_fatal_vlm_error_aborts_run(tmp_path: Path):
+    """A non-retryable provider error (e.g. bad API key) stops the run instead of writing UNKNOWN for every cluster."""
+    from modules.models.vlm_providers import VLMFatalError, reset_vlm_provider
+
+    output_dir = tmp_path / "result"
+    output_dir.mkdir(parents=True)
+    original_input = tmp_path / "original_input.las"
+    _seed_post_process_fixtures(output_dir, original_input)
+
+    cfg = tmp_path / "config.yml"
+    _write_post_process_config(cfg, original_input, output_dir)
+    SegmentorConfig.initialize(str(cfg))
+    reset_vlm_provider()
+
+    with patch("modules.models.post_processing_tools.OBJECTS_CLUSTER_COUNT_THRESHOLD", 1), patch(
+        "modules.models.post_processing_tools.take_rich_media_screenshots",
+        side_effect=_stub_rich_media_screenshots,
+    ), patch(
+        "modules.models.post_processing_tools.identify_object_from_views",
+        side_effect=VLMFatalError("Claude request rejected (AuthenticationError)"),
+    ):
+        ctrl = PostProcessingController()
+        with pytest.raises(VLMFatalError):
+            ctrl.confirm_post_processing(eps=EPS_CLUSTER, min_points=MIN_POINTS_CLUSTER)
+
+    assert not list(output_dir.rglob(CLUSTER_DATA_FILENAME))
+    assert not (output_dir / "3_post_process.las").exists()

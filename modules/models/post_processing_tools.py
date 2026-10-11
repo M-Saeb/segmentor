@@ -19,6 +19,7 @@ from modules.models.vlm_tools import (
     make_cluster_record,
     write_cluster_data_yaml,
 )
+from modules.models.vlm_providers import VLMFatalError, get_vlm_provider
 from modules.models.las_tools import las_io
 from modules.models.las_tools.las_iterator import LasIteratorBasic
 from modules.models.clusters_manager import ClustersManager
@@ -185,7 +186,9 @@ def run_object_vlm_post_processing(
             continue
         valid_cluster_ids.append(cluster_id)
 
-    log.info("Running VLM post-processing for %d clusters", len(valid_cluster_ids))
+    # Build the provider before rendering anything so config / package errors stop the run up front.
+    provider = get_vlm_provider()
+    log.info("Running VLM post-processing (%s) for %d clusters", provider.name, len(valid_cluster_ids))
 
     t_img = time.perf_counter() # for runtime report
     original_pcds = build_original_pcds_per_cluster(
@@ -254,6 +257,8 @@ def run_object_vlm_post_processing(
                 record.get("name"),
                 record.get("description")
             )
+        except VLMFatalError:
+            raise
         except Exception as ex:
             log.warning("VLM call failed for cluster %s: %s", cluster_id, ex, exc_info=True)
             record = make_cluster_record(

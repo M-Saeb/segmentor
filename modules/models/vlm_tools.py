@@ -6,10 +6,9 @@ import time
 from collections.abc import Sequence
 
 import yaml
-from ollama import Client
 
+from modules.models.vlm_providers import VLMFatalError, get_vlm_provider
 from modules.utils import constants
-from modules.utils.config import SegmentorConfig
 from modules.utils.log_utils import get_dual_logger
 
 log = get_dual_logger(__name__)
@@ -80,15 +79,16 @@ def identify_object_from_views(
     chunk_index: int,
 ) -> dict:
     """
-    Send multiple isometric PNGs (rotating views) to Ollama and return a record for the cluster's data.yml.
+    Send multiple isometric PNGs (rotating views) to the configured VLM provider (``vlm.provider``)
+    and return a record for the cluster's data.yml.
+
+    Raises ``VLMFatalError`` without retrying when the provider can't work at all (bad key, unknown model).
     """
     paths = list(image_paths)
     if not paths:
         raise ValueError("identify_object_from_views requires at least one image path.")
 
-    vlm_cfg = SegmentorConfig.get_instance().vlm
-    ollama_model = vlm_cfg.get("model", "gemma3:4b")
-    ollama_host = vlm_cfg.get("host", "http://localhost:11434")
+    provider = get_vlm_provider()
 
     prompt = (
         "You see several isometric views around a LiDAR point cloud region (same scene from different angles) "
@@ -126,34 +126,19 @@ def identify_object_from_views(
 
     for attempt in range(_MAX_RETRIES):
         try:
-            response = Client(host=ollama_host).chat(
-                model=ollama_model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                        "images": images_b64,
-                    }
-                ],
-            )
-
-            raw = ""
-            if isinstance(response, dict):
-                raw = (response.get("message") or {}).get("content") or ""
-            else:
-                msg = getattr(response, "message", None)
-                raw = getattr(msg, "content", "") if msg else str(response)
-
+            raw = provider.generate(prompt, images_b64)
             json_dict = _raw_response_to_json_dict(raw)
             vlm_class = json_dict["class"]
             name = json_dict["label"]
             description = json_dict["description"]
             break
 
+        except VLMFatalError:
+            raise
         except Exception as ex:
             log.warning(
-                "identify_object_from_views: attempt %d/%d failed (cluster=%d): %s",
-                attempt + 1, _MAX_RETRIES, cluster_id, ex,
+                "identify_object_from_views: %s attempt %d/%d failed (cluster=%d): %s",
+                provider.name, attempt + 1, _MAX_RETRIES, cluster_id, ex,
             )
             if attempt < _MAX_RETRIES - 1:
                 time.sleep(_RETRY_DELAY_SECONDS)
