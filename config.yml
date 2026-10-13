@@ -45,12 +45,21 @@ objects_segmentation:
 collect_runtime_report: true
 
 vlm:
-  views_count: 4
-  # model: "qwen3.5:27b"
-  model: "qwen3-vl:8b"
-  # host: "http://192.168.196.108:11434"
-  # model: "gemma3:4b"
-  host: "http://localhost:11434"
+  provider: "claude"   # ollama | claude
+  views_count: 8
+  ollama:
+    # model: "qwen3.5:27b"
+    # model: "qwen3-vl:8b"
+    # host: "http://192.168.196.108:11434"
+    model: "gemma4:e2b"
+    host: "http://localhost:11434"
+  claude: # needs ANTHROPIC_API_KEY in the environment (never put the key in this file)
+    model: "claude-haiku-5-5"  # or claude-sonnet-5-5 / claude-haiku-5-5 for cheaper runs
+    effort: "low"             # low | medium | high | xhigh | max
+    max_tokens: 4096          # covers thinking + the JSON answer
+    max_retries: 2            # SDK retries for 429 / 5xx / connection errors
+    timeout_seconds: 120
+    refusal_fallback: true    # rerun on another model if a safety classifier declines
 
 cityjson_export:
   enable: true
