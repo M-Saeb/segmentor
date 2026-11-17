@@ -2,11 +2,8 @@
 
 **A Tool for Analyzing Point Cloud Data Using Vision Language Models**
 
-Segmentor is a point cloud analysis tool that segments, clusters, and identifies
-surfaces and objects in large LiDAR scans of real-world sites, such as indoor
-parking garages or outdoor parking lots. It combines classical geometric
-algorithms (RANSAC and DBSCAN) with open-weight Vision Language Models (VLMs).
-It needs no task-specific training data and no model retraining.
+Segmentor is a point cloud analysis tool that segments, clusters, and identifies surfaces and objects in large LiDAR scans of real-world sites, such as indoor parking garages or outdoor parking lots. It combines classical geometric algorithms (RANSAC and DBSCAN) with open-weight Vision Language Models (VLMs). It needs no task-specific training data and no model retraining.
+
 ---
 
 ## Table of Contents
