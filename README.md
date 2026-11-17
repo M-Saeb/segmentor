@@ -7,11 +7,6 @@ surfaces and objects in large LiDAR scans of real-world sites, such as indoor
 parking garages or outdoor parking lots. It combines classical geometric
 algorithms (RANSAC and DBSCAN) with open-weight Vision Language Models (VLMs).
 It needs no task-specific training data and no model retraining.
-
-> Research thesis, M.Sc. Embedded Systems Engineering,
-> Fachhochschule Dortmund (University of Applied Sciences and Arts)
-> **Author:** Mohammed Al-Salihi · **Supervisor:** Prof. Dr. Björn Schäfer · **Date:** 08.07.2026
-
 ---
 
 ## Table of Contents
