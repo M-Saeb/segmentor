@@ -11,9 +11,6 @@ It needs no task-specific training data and no model retraining.
 > Research thesis, M.Sc. Embedded Systems Engineering,
 > Fachhochschule Dortmund (University of Applied Sciences and Arts)
 > **Author:** Mohammed Al-Salihi · **Supervisor:** Prof. Dr. Björn Schäfer · **Date:** 08.07.2026
->
-> The full paper is included in this repository:
-> [`Segmentor - Mohammed Al-Salihi.pdf`](./Segmentor%20-%20Mohammed%20Al-Salihi.pdf)
 
 ---
 
